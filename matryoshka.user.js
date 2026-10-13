@@ -1,15 +1,14 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  Автоматический экспорт сделок в буфер обмена
+// @version      3.1
+// @description  Сделать экспорт сделок в Excel проще
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
 // @updateURL    https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js
 // @run-at       document-idle
 // ==/UserScript==
-
 
 (function() {
     'use strict';
@@ -63,6 +62,15 @@
         return 'Безубыток';
     }
 
+    // Форматирование даты в DD.MM.YYYY
+    function formatDate(timestamp) {
+        const d = new Date(timestamp * 1000);
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}.${month}.${year}`;
+    }
+
     // 3. Извлечение сделки
     function extractTrade() {
         try {
@@ -98,27 +106,31 @@
             const entry = points[0]?.price || 0;
             const time = points[0]?.time || Math.floor(Date.now() / 1000);
 
-            // Универсальный расчет цен: вычисляем реальный множитель актива (золото, крипта, форекс)
-            const p3 = points[3]?.price || entry;
-            const diff = Math.abs(entry - p3);
-            const levelForP3 = isLong ? props.stopLevel : props.profitLevel; // В Long точка 3 это Стоп, в Short точка 3 это Тейк
-            const tickMultiplier = (levelForP3 > 0 && diff > 0) ? (diff / levelForP3) : 0.001;
+            // Идеальное вычисление шага цены (Price Step) из ядра TradingView
+            let symInfo = {};
+            try { symInfo = (typeof ms.symbolInfo === 'function' ? ms.symbolInfo() : ms._symbolInfo) || {}; } catch(e){}
+            const priceStep = (typeof ms.priceStep === 'function' ? ms.priceStep() : ms.priceStep) ||
+                              (symInfo.minmov && symInfo.pricescale ? symInfo.minmov / symInfo.pricescale : 0.001);
 
-            const stop = isLong ? entry - (props.stopLevel * tickMultiplier) : entry + (props.stopLevel * tickMultiplier);
-            const target = isLong ? entry + (props.profitLevel * tickMultiplier) : entry - (props.profitLevel * tickMultiplier);
+            // Идеальный расчет уровней
+            const stop = isLong ? entry - (props.stopLevel * priceStep) : entry + (props.stopLevel * priceStep);
+            const target = isLong ? entry + (props.profitLevel * priceStep) : entry - (props.profitLevel * priceStep);
             const rr = (props.stopLevel && props.stopLevel > 0) ? (props.profitLevel / props.stopLevel).toFixed(2) : "0.00";
 
             const calculatedOutcome = calculateOutcome(bars, points[0]?.index ?? 0, points[1]?.index ?? (points[0]?.index ?? 0), isLong, stop, target);
+
+            // Динамическое определение знаков после запятой (для золота 3, для форекса 5 и т.д.)
+            const decimals = priceStep < 1 ? priceStep.toString().split('.')[1]?.length || 3 : 2;
 
             return {
                 symbol: props.symbol || 'XAUUSD',
                 timeframe: 'M' + (props.interval || '1'),
                 direction: isLong ? 'LONG' : 'SHORT',
-                entryPrice: Number(entry.toFixed(3)),
-                stopPrice: Number(stop.toFixed(3)),
-                targetPrice: Number(target.toFixed(3)),
+                entryPrice: Number(entry.toFixed(decimals)),
+                stopPrice: Number(stop.toFixed(decimals)),
+                targetPrice: Number(target.toFixed(decimals)),
                 riskReward: Number(rr),
-                candleTime: new Date(time * 1000).toLocaleString('ru-RU'),
+                candleDate: formatDate(time),
                 session: detectSession(time),
                 autoResult: calculatedOutcome
             };
@@ -134,7 +146,7 @@
 
         <div style="text-align:center; margin-bottom:16px;">
             <div style="font-size:10px; letter-spacing:2px; color:#d6b658; text-transform:uppercase; margin-bottom:4px;">Стратегия «Матрёшка»</div>
-            <div style="font-family:'Georgia', 'Playfair Display', serif; font-size:22px; font-weight:bold; color:#d6b658; letter-spacing:1px;">ЖУРНАЛ БЭКТЕСТА</div>
+            <div style="font-family:'Georgia', 'Playfair Display', serif; font-size:22px; font-weight:bold; color:#d6b658; letter-spacing:1px;">ЭКСПОРТ В EXCEL</div>
         </div>
 
         <div style="background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:10px; margin-bottom:16px; font-size:12px; line-height:1.6;">
@@ -191,18 +203,33 @@
             <div class="bt-section-title" style="margin:0;">РЕЗУЛЬТАТ СДЕЛКИ</div>
             <span style="font-size:9px; color:#089981;">АВТОРАСЧЕТ ✓</span>
         </div>
-        <div class="bt-group" id="bt-result" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; margin-bottom:16px;">
+        <div class="bt-group" id="bt-result" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; margin-bottom:12px;">
             <button class="bt-chip" data-val="Тейк" style="--ac:#089981;">Тейк</button>
             <button class="bt-chip" data-val="Стоп" style="--ac:#f23645;">Стоп</button>
             <button class="bt-chip" data-val="Безубыток">БУ</button>
             <button class="bt-chip" data-val="Пропуск">Пропуск</button>
         </div>
 
+        <div class="bt-section-title">ОШИБКА ИСПОЛНЕНИЯ</div>
+        <select id="bt-err" style="width:100%; background:#1a1a1a; color:#e0e0e0; border:1px solid #332d1f; padding:6px; border-radius:4px; font-size:11px; outline:none; cursor:pointer; margin-bottom:12px;">
+            <option value="—">—</option>
+            <option value="Ранний вход">Ранний вход</option>
+            <option value="Нет подтверждения">Нет подтверждения</option>
+            <option value="Вход без снятия ликвидности">Вход без снятия ликвидности</option>
+            <option value="Стоп слишком узкий">Стоп слишком узкий</option>
+            <option value="Стоп слишком широкий">Стоп слишком широкий</option>
+            <option value="Ранний выход">Ранний выход</option>
+            <option value="Пересидел цель">Пересидел цель</option>
+            <option value="Нарушен минимальный R:R">Нарушен минимальный R:R</option>
+            <option value="Вход вне сессии">Вход вне сессии</option>
+            <option value="Другое">Другое</option>
+        </select>
+
         <input type="text" id="bt-img" placeholder="Ссылка на скриншот (Alt+S -> Ctrl+V)" style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:8px; border-radius:4px; font-size:11px; margin-bottom:6px; outline:none;">
         <input type="text" id="bt-comment" placeholder="Комментарий к сделке..." style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:8px; border-radius:4px; font-size:11px; margin-bottom:16px; outline:none;">
 
         <div style="display:flex; gap:8px;">
-            <button id="bt-save-btn" style="flex:1; background:#d6b658; color:#0a0a0a; border:none; padding:10px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:13px; transition:0.2s;">Копировать в буфер (Enter)</button>
+            <button id="bt-save-btn" style="flex:1; background:#d6b658; color:#0a0a0a; border:none; padding:10px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:13px; transition:0.2s;">Копировать для Excel (Enter)</button>
             <button id="bt-close-btn" style="background:#1a1a1a; color:#a0a0a0; border:1px solid #332d1f; padding:10px 14px; border-radius:4px; cursor:pointer; transition:0.2s;">✕</button>
         </div>
     </div>
@@ -213,7 +240,7 @@
         .bt-chip:hover { border-color: #d6b658; color: #e0e0e0; }
         .bt-chip.active { background: var(--ac, #d6b658); color: #0a0a0a; border-color: var(--ac, #d6b658); font-weight: bold; }
         #bt-save-btn:hover { background: #e8c767; box-shadow: 0 0 10px rgba(214, 182, 88, 0.3); }
-        #bt-img:focus, #bt-comment:focus { border-color: #d6b658; }
+        #bt-img:focus, #bt-comment:focus, #bt-err:focus { border-color: #d6b658; }
     </style>
     `;
 
@@ -243,7 +270,7 @@
         document.getElementById('bt-en').innerText = currentTrade.entryPrice;
         document.getElementById('bt-st').innerText = currentTrade.stopPrice;
         document.getElementById('bt-tg').innerText = currentTrade.targetPrice;
-        document.getElementById('bt-time').innerText = currentTrade.candleTime;
+        document.getElementById('bt-time').innerText = currentTrade.candleDate;
 
         const resultGroup = document.getElementById('bt-result');
         resultGroup.querySelectorAll('.bt-chip').forEach(b => {
@@ -251,23 +278,50 @@
             if (b.dataset.val === currentTrade.autoResult) b.classList.add('active');
         });
 
+        document.getElementById('bt-err').value = "—";
+
         document.getElementById('bt-modal').style.display = 'block';
         setTimeout(() => document.getElementById('bt-img').focus(), 50);
     }
 
     function saveTrade() {
-        const payload = {
-            ...currentTrade,
-            trend: document.querySelector('#bt-trend .active')?.dataset.val,
-            entryZone: document.querySelector('#bt-zone .active')?.dataset.val,
-            liquidityTaken: document.querySelector('#bt-liq .active')?.dataset.val,
-            confirmation: document.getElementById('bt-conf').value,
-            result: document.querySelector('#bt-result .active')?.dataset.val,
-            imageUrl: document.getElementById('bt-img').value,
-            comment: document.getElementById('bt-comment').value
-        };
+        const trend = document.querySelector('#bt-trend .active')?.dataset.val || "";
+        const entryZone = document.querySelector('#bt-zone .active')?.dataset.val || "";
+        const liquidityTaken = document.querySelector('#bt-liq .active')?.dataset.val || "";
+        const confirmation = document.getElementById('bt-conf').value;
+        const result = document.querySelector('#bt-result .active')?.dataset.val || "";
+        const execError = document.getElementById('bt-err').value;
 
-        navigator.clipboard.writeText(JSON.stringify(payload, null, 2)).then(() => {
+        let commentStr = document.getElementById('bt-comment').value;
+        const imgUrl = document.getElementById('bt-img').value;
+        if (imgUrl) commentStr += (commentStr ? " " : "") + imgUrl;
+
+        // Строка для Excel (Табуляция \t пропускает ячейки с формулами)
+        const tsvArray = [
+            currentTrade.candleDate,
+            currentTrade.session,
+            trend,
+            currentTrade.timeframe,
+            entryZone,
+            liquidityTaken,
+            confirmation,
+            currentTrade.entryPrice,
+            currentTrade.stopPrice,
+            currentTrade.targetPrice,
+            "", // Пропуск: Риск
+            "", // Пропуск: Потенциал
+            "", // Пропуск: R:R
+            result,
+            "", // Пропуск: Итог
+            "", // Пропуск: Накопительно
+            "", // Пропуск: Просадка
+            execError,
+            commentStr
+        ];
+
+        const tsvString = tsvArray.join('\t');
+
+        navigator.clipboard.writeText(tsvString).then(() => {
             document.getElementById('bt-modal').style.display = 'none';
             document.getElementById('bt-img').value = '';
             document.getElementById('bt-comment').value = '';
