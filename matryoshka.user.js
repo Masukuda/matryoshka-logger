@@ -2,7 +2,7 @@
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
 // @version      2.1
-// @description  Экспорт сделок из TradingView в Excel / Google Таблицы (Стратегия «Матрёшка»)
+// @description  Экспорт сделок из TradingView в Excel и Google Таблицы (Стратегия «Матрёшка»)
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
 // @updateURL    https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js
@@ -23,13 +23,13 @@
 
     const defaultState = {
         decimalSeparator: '.',
-        formulaMode: 'en_comma', // 'en_comma' | 'ru_semi' | 'en_semi' | 'val' | 'empty'
+        formulaMode: 'en_comma',
         excelRow: 6,
         trend: 'Тренд вверх',
         zone: 'Ордер-блок',
         liq: 'да',
         conf: 'Слом структуры',
-        customHotkey: null,      // { code, key, alt, ctrl, shift, meta, label }
+        customHotkey: null,
         lastSavedTradeSig: '',
         lastSavedRow: 6,
         batchQueue: [],
@@ -58,39 +58,6 @@
     let currentTrade = null;
     let isReEditingSameTrade = false;
     let isRecordingHotkey = false;
-    let interceptedScreenshotUrl = '';
-
-    // --- Перехват ссылки на скриншот (Alt+S / ⌥+S) ---
-
-    function checkAndStoreScreenshotUrl(text) {
-        if (typeof text !== 'string') return;
-        const clean = text.trim();
-        if (/^https?:\/\/(www\.)?(tradingview\.com\/x\/|prnt\.sc\/|gyazo\.com\/|imgur\.com\/|i\.imgur\.com\/)/i.test(clean)) {
-            interceptedScreenshotUrl = clean;
-            const imgInput = document.getElementById('bt-img');
-            if (imgInput && document.getElementById('bt-modal')?.style.display === 'block') {
-                imgInput.value = clean;
-                showToast('Ссылка на скриншот подхвачена ✓');
-            }
-        }
-    }
-
-    try {
-        if (pageWindow.navigator?.clipboard?.writeText) {
-            const origWriteText = pageWindow.navigator.clipboard.writeText.bind(pageWindow.navigator.clipboard);
-            pageWindow.navigator.clipboard.writeText = function(text) {
-                checkAndStoreScreenshotUrl(text);
-                return origWriteText(text);
-            };
-        }
-    } catch (e) {}
-
-    document.addEventListener('copy', e => {
-        try {
-            const copied = e.clipboardData?.getData('text/plain');
-            if (copied) checkAndStoreScreenshotUrl(copied);
-        } catch (err) {}
-    }, true);
 
     // --- Расчет сессии, времени и результата ---
 
@@ -536,7 +503,7 @@
         </select>
 
         <input type="text" id="bt-comment" placeholder="Комментарий (колонка T, нажмите Tab для ввода)..." style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:5px; outline:none;">
-        <input type="text" id="bt-img" placeholder="Скриншот (колонка U, Alt+S / ⌥S или Ctrl+V / ⌘V)" style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:9px; outline:none;">
+        <input type="text" id="bt-img" placeholder="Скриншот (колонка U, вставьте через Ctrl+V / ⌘V)" style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:9px; outline:none;">
 
         <div style="display:flex; gap:6px; margin-bottom:8px;">
             <button type="button" id="bt-save-btn" style="flex:1; background:#d6b658; color:#0a0a0a; border:none; padding:9px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px; transition:0.2s;">Скопировать в B<span id="bt-btn-row">${state.excelRow}</span> (Enter)</button>
@@ -545,7 +512,7 @@
 
         <div style="background:#121212; padding:6px 8px; border-radius:4px; border:1px solid #222; font-size:10px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                <span style="color:#9e9e9e;">Серия: <b id="bt-batch-count" style="color:#d6b658;">0</b> сд. | <span id="bt-live-stats" style="color:#a0a0a0;">WR: 0% | 0.00 R</span></span>
+                <span style="color:#9e9e9e;">Серия: <b id="bt-batch-count" style="color:#d6b658;">0</b> сд. &#8226; <span id="bt-live-stats" style="color:#a0a0a0;">WR: 0% &#8226; 0.00 R</span></span>
             </div>
             <div style="display:flex; gap:4px;">
                 <button type="button" id="bt-copy-batch" class="bt-mini-btn" style="flex:1; padding:4px 6px;">📋 Скопировать всю пачку (для B<span id="bt-batch-start-row">${getBatchStartRow()}</span>)</button>
@@ -653,7 +620,7 @@
         const closed = wins + losses;
         const wr = closed > 0 ? Math.round((wins / closed) * 100) : 0;
         const sign = totalR > 0 ? '+' : '';
-        return `WR: ${wr}% (${wins}Т/${losses}С) | ${sign}${totalR.toFixed(2)} R`;
+        return `WR: ${wr}% (${wins}Т/${losses}С) \u2022 ${sign}${totalR.toFixed(2)} R`;
     }
 
     function updateUIControls() {
@@ -676,7 +643,7 @@
         copyBatchBtnEl.innerHTML = `📋 Скопировать всю пачку (для B<span id="bt-batch-start-row">${batchStartRow}</span>)`;
 
         if (isReEditingSameTrade) {
-            saveBtnEl.innerHTML = `Обновить B<span id="bt-btn-row">${targetRow}</span> (повтор сделки · Enter)`;
+            saveBtnEl.innerHTML = `Обновить B<span id="bt-btn-row">${targetRow}</span> (повтор сделки \u2022 Enter)`;
         } else {
             saveBtnEl.innerHTML = `Скопировать в B<span id="bt-btn-row">${targetRow}</span> (Enter)`;
         }
@@ -686,10 +653,10 @@
         document.getElementById('bt-st').innerText = formatNumForSheet(currentTrade.stopPrice);
         document.getElementById('bt-tg').innerText = formatNumForSheet(currentTrade.targetPrice);
         document.getElementById('bt-pts-preview').innerText =
-            `Риск: ${formatNumForSheet(currentTrade.riskPts)} п. \vert{} Потенциал: ${formatNumForSheet(currentTrade.potPts)} п.`;
+            `Риск: ${formatNumForSheet(currentTrade.riskPts)} п. \u2022 Потенциал: ${formatNumForSheet(currentTrade.potPts)} п.`;
 
         const badge = document.getElementById('bt-badge');
-        badge.innerText = `${currentTrade.direction} (R:R${formatNumForSheet(currentTrade.riskReward)})`;
+        badge.innerText = `${currentTrade.direction} (R:R ${formatNumForSheet(currentTrade.riskReward)})`;
     }
 
     setGroupValue('bt-trend', state.trend);
@@ -865,7 +832,7 @@
         const badge = document.getElementById('bt-badge');
         badge.style.background = currentTrade.direction === 'LONG' ? '#089981' : '#f23645';
 
-        document.getElementById('bt-sym-tf').innerText = `${currentTrade.symbol} \vert{}${currentTrade.timeframe}`;
+        document.getElementById('bt-sym-tf').innerText = `${currentTrade.symbol} \u2022 ${currentTrade.timeframe}`;
         document.getElementById('bt-time').innerText = `Дата: ${currentTrade.candleDate}`;
 
         const currentTrend = getGroupValue('bt-trend');
@@ -878,10 +845,6 @@
         setGroupValue('bt-session', currentTrade.session);
         setGroupValue('bt-result', currentTrade.autoResult);
         document.getElementById('bt-err').value = '—';
-
-        if (interceptedScreenshotUrl) {
-            document.getElementById('bt-img').value = interceptedScreenshotUrl;
-        }
 
         updateUIControls();
         autoSuggestError();
@@ -934,7 +897,6 @@
                 lastSavedTradeSig: currentTrade.signature
             });
 
-            interceptedScreenshotUrl = '';
             isReEditingSameTrade = false;
             modalEl.style.display = 'none';
             document.getElementById('bt-img').value = '';
@@ -977,7 +939,6 @@
     });
 
     window.addEventListener('keydown', e => {
-        // Запись пользовательского хоткея
         if (isRecordingHotkey) {
             e.preventDefault();
             e.stopPropagation();
