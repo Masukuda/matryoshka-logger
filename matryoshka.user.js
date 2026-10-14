@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Экспорт сделок из TradingView в Excel / Google Таблицы (Стратегия «Матрёшка»)
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
@@ -17,6 +17,7 @@
 
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
     const STORAGE_KEY = 'matryoshka_logger_state_v2';
+    const isMac = /Mac|iPod|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
     // --- Конфигурация и состояние ---
 
@@ -28,6 +29,7 @@
         zone: 'Ордер-блок',
         liq: 'да',
         conf: 'Слом структуры',
+        customHotkey: null,      // { code, key, alt, ctrl, shift, meta, label }
         lastSavedTradeSig: '',
         lastSavedRow: 6,
         batchQueue: [],
@@ -55,9 +57,10 @@
     if (!Array.isArray(state.batchQueue)) state.batchQueue = [];
     let currentTrade = null;
     let isReEditingSameTrade = false;
+    let isRecordingHotkey = false;
     let interceptedScreenshotUrl = '';
 
-    // --- Перехват ссылки на скриншот (Alt+S) ---
+    // --- Перехват ссылки на скриншот (Alt+S / ⌥+S) ---
 
     function checkAndStoreScreenshotUrl(text) {
         if (typeof text !== 'string') return;
@@ -383,16 +386,30 @@
         return state.excelRow;
     }
 
+    function getHotkeyLabel() {
+        if (state.customHotkey?.label) return state.customHotkey.label;
+        return isMac ? '⌥Q / Fn+F2' : 'F2 / Alt+Q';
+    }
+
     // --- Интерфейс ---
 
     const modalHtml = `
     <div id="bt-toast" style="display:none; position:fixed; bottom:24px; right:24px; z-index:10000000; background:#141414; color:#e0e0e0; padding:10px 16px; border-radius:6px; border-left:4px solid #d6b658; box-shadow:0 8px 24px rgba(0,0,0,0.85); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:12px; font-weight:500;"></div>
 
+    <button type="button" id="bt-fab-trigger" title="Открыть экспорт сделки (Матрёшка)" style="position:fixed; bottom:18px; left:58px; z-index:9999990; background:#111; color:#d6b658; border:1px solid #332d1f; border-radius:6px; padding:5px 10px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:11px; font-weight:bold; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.6); transition:0.2s;">
+        🪆 Матрёшка <span id="bt-fab-hk" style="color:#888; font-weight:normal; margin-left:3px;">(${getHotkeyLabel()})</span>
+    </button>
+
     <div id="bt-modal" style="display:none; position:fixed; top:${state.posTop}px; right:${state.posRight}px; z-index:9999999; background:#0a0a0a; color:#e0e0e0; padding:15px; border-radius:8px; box-shadow:0 12px 32px rgba(0,0,0,0.85); border:1px solid #332d1f; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; width:390px; user-select:none;">
 
-        <div id="bt-drag-handle" style="text-align:center; margin-bottom:10px; cursor:move; padding-bottom:6px; border-bottom:1px solid #1f1f1f;">
-            <div style="font-size:10px; letter-spacing:2px; color:#d6b658; text-transform:uppercase; margin-bottom:2px;">Стратегия «Матрёшка»</div>
-            <div style="font-family:'Georgia', 'Playfair Display', serif; font-size:18px; font-weight:bold; color:#d6b658; letter-spacing:1px;">ЭКСПОРТ В ТАБЛИЦУ</div>
+        <div id="bt-drag-handle" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; cursor:move; padding-bottom:6px; border-bottom:1px solid #1f1f1f;">
+            <div style="text-align:left;">
+                <div style="font-size:9px; letter-spacing:1.5px; color:#d6b658; text-transform:uppercase;">Стратегия «Матрёшка»</div>
+                <div style="font-family:'Georgia', 'Playfair Display', serif; font-size:17px; font-weight:bold; color:#d6b658; letter-spacing:0.5px;">ЭКСПОРТ В ТАБЛИЦУ</div>
+            </div>
+            <button type="button" id="bt-hk-record-btn" class="bt-mini-btn" title="Кликните, чтобы назначить любую удобную клавишу открытия окна" style="padding:4px 8px; font-size:10px;">
+                ⌨ Хоткей: <b id="bt-hk-label" style="color:#d6b658;">${getHotkeyLabel()}</b>
+            </button>
         </div>
 
         <div style="background:#121212; padding:7px 8px; border-radius:6px; border:1px solid #222; margin-bottom:9px; font-size:10px;">
@@ -519,7 +536,7 @@
         </select>
 
         <input type="text" id="bt-comment" placeholder="Комментарий (колонка T, нажмите Tab для ввода)..." style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:5px; outline:none;">
-        <input type="text" id="bt-img" placeholder="Скриншот (колонка U, Alt+S или Ctrl+V)" style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:9px; outline:none;">
+        <input type="text" id="bt-img" placeholder="Скриншот (колонка U, Alt+S / ⌥S или Ctrl+V / ⌘V)" style="width:100%; box-sizing:border-box; background:#141414; border:1px solid #332d1f; color:#e0e0e0; padding:6px 8px; border-radius:4px; font-size:11px; margin-bottom:9px; outline:none;">
 
         <div style="display:flex; gap:6px; margin-bottom:8px;">
             <button type="button" id="bt-save-btn" style="flex:1; background:#d6b658; color:#0a0a0a; border:none; padding:9px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:12px; transition:0.2s;">Скопировать в B<span id="bt-btn-row">${state.excelRow}</span> (Enter)</button>
@@ -546,6 +563,7 @@
         .bt-mini-btn:hover { border-color: #d6b658; color: #e0e0e0; }
         .bt-mini-btn.active { background: #d6b658; color: #0a0a0a; border-color: #d6b658; font-weight: bold; }
         #bt-save-btn:hover { background: #e8c767; box-shadow: 0 0 10px rgba(214, 182, 88, 0.3); }
+        #bt-fab-trigger:hover { border-color: #d6b658; background: #1a1a1a; }
         #bt-img:focus, #bt-comment:focus, #bt-err:focus, #bt-conf:focus, #bt-row-num:focus { border-color: #d6b658; }
     </style>
     `;
@@ -557,6 +575,10 @@
     const rowInputEl = document.getElementById('bt-row-num');
     const saveBtnEl = document.getElementById('bt-save-btn');
     const copyBatchBtnEl = document.getElementById('bt-copy-batch');
+    const hkRecordBtn = document.getElementById('bt-hk-record-btn');
+    const hkLabelEl = document.getElementById('bt-hk-label');
+    const fabTriggerEl = document.getElementById('bt-fab-trigger');
+    const fabHkEl = document.getElementById('bt-fab-hk');
     let toastTimer = null;
 
     function showToast(msg, type = 'success') {
@@ -644,7 +666,10 @@
 
         const targetRow = isReEditingSameTrade ? state.lastSavedRow : state.excelRow;
         const batchStartRow = getBatchStartRow();
+        const hkText = getHotkeyLabel();
 
+        hkLabelEl.innerText = hkText;
+        fabHkEl.innerText = `(${hkText})`;
         rowInputEl.value = targetRow;
         document.getElementById('bt-batch-count').innerText = state.batchQueue.length;
         document.getElementById('bt-live-stats').innerText = computeBatchStats();
@@ -661,10 +686,10 @@
         document.getElementById('bt-st').innerText = formatNumForSheet(currentTrade.stopPrice);
         document.getElementById('bt-tg').innerText = formatNumForSheet(currentTrade.targetPrice);
         document.getElementById('bt-pts-preview').innerText =
-            `Риск: ${formatNumForSheet(currentTrade.riskPts)} п. | Потенциал: ${formatNumForSheet(currentTrade.potPts)} п.`;
+            `Риск: ${formatNumForSheet(currentTrade.riskPts)} п. \vert{} Потенциал: ${formatNumForSheet(currentTrade.potPts)} п.`;
 
         const badge = document.getElementById('bt-badge');
-        badge.innerText = `${currentTrade.direction} (R:R ${formatNumForSheet(currentTrade.riskReward)})`;
+        badge.innerText = `${currentTrade.direction} (R:R${formatNumForSheet(currentTrade.riskReward)})`;
     }
 
     setGroupValue('bt-trend', state.trend);
@@ -674,6 +699,23 @@
     updateUIControls();
 
     // --- Обработчики событий и хоткеев ---
+
+    fabTriggerEl.onclick = () => openModal();
+
+    hkRecordBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (isRecordingHotkey) {
+            isRecordingHotkey = false;
+            saveState({ customHotkey: null });
+            hkRecordBtn.classList.remove('active');
+            updateUIControls();
+            showToast('Восстановлен стандартный хоткей: ' + getHotkeyLabel());
+            return;
+        }
+        isRecordingHotkey = true;
+        hkRecordBtn.classList.add('active');
+        hkLabelEl.innerText = 'Нажмите клавишу...';
+    };
 
     document.getElementById('bt-sep-group').addEventListener('click', e => {
         const btn = e.target.closest('.bt-mini-btn');
@@ -761,7 +803,7 @@
         }).join('\n');
 
         navigator.clipboard.writeText(allRows).then(() => {
-            showToast(`✓ Скопировано сделок: ${state.batchQueue.length}! Поставьте курсор в B${startRow} и нажмите Ctrl+V`);
+            showToast(`✓ Скопировано сделок: ${state.batchQueue.length}! Поставьте курсор в B${startRow} и нажмите ${isMac ? '⌘V' : 'Ctrl+V'}`);
         });
     };
 
@@ -783,6 +825,7 @@
         let isDragging = false, startX = 0, startY = 0, initialTop = 0, initialRight = 0;
 
         handle.addEventListener('mousedown', e => {
+            if (e.target.closest('#bt-hk-record-btn')) return;
             isDragging = true;
             startX = e.clientX;
             startY = e.clientY;
@@ -822,7 +865,7 @@
         const badge = document.getElementById('bt-badge');
         badge.style.background = currentTrade.direction === 'LONG' ? '#089981' : '#f23645';
 
-        document.getElementById('bt-sym-tf').innerText = `${currentTrade.symbol} | ${currentTrade.timeframe}`;
+        document.getElementById('bt-sym-tf').innerText = `${currentTrade.symbol} \vert{}${currentTrade.timeframe}`;
         document.getElementById('bt-time').innerText = `Дата: ${currentTrade.candleDate}`;
 
         const currentTrend = getGroupValue('bt-trend');
@@ -904,6 +947,22 @@
         });
     }
 
+    function matchesOpenHotkey(e) {
+        if (state.customHotkey) {
+            const hk = state.customHotkey;
+            return (
+                e.code === hk.code &&
+                !!e.altKey === !!hk.alt &&
+                !!e.ctrlKey === !!hk.ctrl &&
+                !!e.shiftKey === !!hk.shift &&
+                !!e.metaKey === !!hk.meta
+            );
+        }
+        if (e.key === 'F2' || e.code === 'F2') return true;
+        if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyQ') return true;
+        return false;
+    }
+
     window.addEventListener('paste', e => {
         if (modalEl.style.display !== 'block') return;
         const activeTag = document.activeElement?.tagName;
@@ -918,10 +977,49 @@
     });
 
     window.addEventListener('keydown', e => {
+        // Запись пользовательского хоткея
+        if (isRecordingHotkey) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+
+            if (e.key === 'Escape') {
+                isRecordingHotkey = false;
+                hkRecordBtn.classList.remove('active');
+                updateUIControls();
+                return;
+            }
+
+            const parts = [];
+            if (e.metaKey) parts.push(isMac ? '⌘' : 'Win+');
+            if (e.ctrlKey) parts.push(isMac ? '⌃' : 'Ctrl+');
+            if (e.altKey) parts.push(isMac ? '⌥' : 'Alt+');
+            if (e.shiftKey) parts.push(isMac ? '⇧' : 'Shift+');
+
+            const cleanKeyName = e.code.replace(/^Key/, '').replace(/^Digit/, '');
+            parts.push(cleanKeyName);
+
+            const customHotkey = {
+                code: e.code,
+                alt: !!e.altKey,
+                ctrl: !!e.ctrlKey,
+                shift: !!e.shiftKey,
+                meta: !!e.metaKey,
+                label: parts.join('')
+            };
+
+            isRecordingHotkey = false;
+            hkRecordBtn.classList.remove('active');
+            saveState({ customHotkey });
+            updateUIControls();
+            showToast(`Новый хоткей сохранен: ${customHotkey.label}`);
+            return;
+        }
+
         const isModalOpen = modalEl.style.display === 'block';
         const inInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
 
-        if (e.key === 'F2' && !inInput) {
+        if (matchesOpenHotkey(e) && !inInput) {
             e.preventDefault();
             e.stopPropagation();
             openModal();
