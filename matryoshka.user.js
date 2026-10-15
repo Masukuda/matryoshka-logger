@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.2.1
 // @description  Экспорт сделок из TradingView в Excel и Google Таблицы
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
@@ -1174,7 +1174,8 @@
         .bt-drag-pill { background:#1a1a20; color:#f4f4f5; border:1px solid #383844; border-radius:5px; padding:3px 7px; font-size:10.5px; cursor:grab; display:inline-flex; align-items:center; gap:5px; transition:transform 0.1s ease, border-color 0.1s ease; }
         .bt-drag-pill.dragging-active { background:#2a2515; border-color:#f3d26b; color:#f3d26b; transform:scale(1.05); z-index:10; cursor:grabbing; box-shadow:0 4px 12px rgba(0,0,0,0.6); }
         .bt-del-col { color:#f23645; font-weight:bold; cursor:pointer; padding:0 2px; font-size:11px; }
-        .bt-cm-item:hover { background:rgba(229,193,88,0.18); color:#f3d26b !important; }
+		.bt-cm-item:hover, .bt-cc-item:hover { background:rgba(229,193,88,0.18); color:#f3d26b !important; }
+        #bt-cc-btn:hover { border-color:#52525b; }
         #bt-quick-copy-prices:hover { border-color:rgba(229,193,88,0.55); }
     </style>
     `;
@@ -1237,6 +1238,58 @@
             return `<button type="button" class="bt-chip ${centeredClass} ${isAct}" data-val="${val}" ${styleVars}><span>${label}</span>${kbd}</button>`;
         }).join('');
         return `<div class="bt-group bt-grid-${cols}" id="${id}">${htmlOpts}</div>`;
+    }
+
+	const CANDLE_COLORS = {
+        'Лонг 3': { hex: '#72f238', hint: 'салатовая' },
+        'Лонг 2': { hex: '#4bb8d4', hint: 'голубая' },
+        'Лонг 1': { hex: '#3b7dff', hint: 'синяя' },
+        'Шорт 3': { hex: '#f7e84b', hint: 'жёлтая' },
+        'Шорт 2': { hex: '#eb3b4b', hint: 'красная' },
+        'Шорт 1': { hex: '#8a2bbd', hint: 'фиолетовая' }
+    };
+
+    function makeCandleColorSelect(activeVal) {
+        const info = CANDLE_COLORS[activeVal] || CANDLE_COLORS['Лонг 3'];
+        const itemsHtml = Object.entries(CANDLE_COLORS).map(([k, v]) => `
+            <div class="bt-cc-item" data-val="${k}" style="display:flex; align-items:center; justify-content:space-between; padding:5px 8px; border-radius:4px; cursor:pointer; font-size:11px; color:#f4f4f5;">
+                <div style="display:flex; align-items:center; gap:7px;">
+                    <span style="width:13px; height:13px; border-radius:3px; background:${v.hex}; display:inline-block; box-shadow:0 0 0 1px rgba(255,255,255,0.2);"></span>
+                    <span style="font-weight:600;">${k}</span>
+                </div>
+                <span style="color:#8a8a93; font-size:10px;">${v.hint}</span>
+            </div>
+        `).join('');
+
+        return `
+            <div id="bt-cc-wrap" style="position:relative; margin-bottom:6px;">
+                <input type="hidden" id="f-candle-col" value="${activeVal}">
+                <button type="button" id="bt-cc-btn" style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 7px; border-radius:5px; font-size:11px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:space-between; outline:none; transition:0.12s;">
+                    <span style="display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden;">
+                        <span id="bt-cc-dot" style="width:12px; height:12px; border-radius:3px; background:${info.hex}; flex-shrink:0; box-shadow:0 0 0 1px rgba(255,255,255,0.22);"></span>
+                        <span id="bt-cc-label" style="font-weight:600;">${activeVal}</span>
+                        <span id="bt-cc-hint" style="color:#8a8a93; font-size:10px;">${info.hint}</span>
+                    </span>
+                    <span style="color:#8a8a93; font-size:10px;">▾</span>
+                </button>
+                <div id="bt-cc-menu" style="display:none; position:absolute; top:31px; left:0; width:100%; background:#18181e; border:1px solid #3d3522; border-radius:6px; box-shadow:0 10px 25px rgba(0,0,0,0.92); z-index:120; padding:3px; box-sizing:border-box;">
+                    ${itemsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    function setCandleColVal(val) {
+        const info = CANDLE_COLORS[val];
+        if (!info) return;
+        const inp = document.getElementById('f-candle-col');
+        const dot = document.getElementById('bt-cc-dot');
+        const lbl = document.getElementById('bt-cc-label');
+        const hnt = document.getElementById('bt-cc-hint');
+        if (inp) inp.value = val;
+        if (dot) dot.style.background = info.hex;
+        if (lbl) lbl.innerText = val;
+        if (hnt) hnt.innerText = info.hint;
     }
 
     function makeSelect(id, options, activeVal, mb = '6px') {
@@ -1469,8 +1522,8 @@
                             ${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель', 'Средний покупатель', 'Красивый покупатель', 'Сильный продавец', 'Средний продавец', 'Красивый продавец', 'Зона входа', 'Проторговка', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], 'Разворотная зона')}
                         </div>
                         <div>
-                            <div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>
-                            ${makeSelect('f-candle-col', ['Лонг 3', 'Лонг 2', 'Лонг 1', 'Шорт 3', 'Шорт 2', 'Шорт 1'], defCandleCol)}
+							<div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>
+                            ${makeCandleColorSelect(defCandleCol)}
                         </div>
                     </div>
 
@@ -1610,6 +1663,21 @@
             };
         });
 
+		const ccBtn = document.getElementById('bt-cc-btn');
+        const ccMenu = document.getElementById('bt-cc-menu');
+        if (ccBtn && ccMenu) {
+            ccBtn.onclick = e => {
+                e.stopPropagation();
+                ccMenu.style.display = ccMenu.style.display === 'block' ? 'none' : 'block';
+            };
+            ccMenu.querySelectorAll('.bt-cc-item').forEach(item => {
+                item.onclick = () => {
+                    setCandleColVal(item.dataset.val);
+                    ccMenu.style.display = 'none';
+                };
+            });
+        }
+
         dynFieldsEl.querySelectorAll('.bt-struct-preset').forEach(btn => {
             btn.onclick = () => {
                 const sel = document.getElementById('f-struct');
@@ -1701,9 +1769,9 @@
             setChipVal('f-res30', defRes30);
             setChipVal('f-hit1r', currentTrade.reached1R ? 'да' : 'нет');
             setChipVal('f-hit3r', currentTrade.reached3R ? 'да' : 'нет');
-            if (document.getElementById('f-candle-col')) {
+			if (document.getElementById('f-candle-col')) {
                 const isLong = currentTrade.direction === 'LONG';
-                document.getElementById('f-candle-col').value = currentTrade.ind?.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3');
+                setCandleColVal(currentTrade.ind?.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3'));
             }
             if (currentTrade.entryExtreme && document.getElementById('f-swept-lvl')) {
                 document.getElementById('f-swept-lvl').value = numStr(currentTrade.entryExtreme);
@@ -2255,9 +2323,13 @@
         };
     });
 
-    modalEl.addEventListener('click', e => {
+	modalEl.addEventListener('click', e => {
         if (!e.target.closest('#bt-comment-menu') && !e.target.closest('#bt-toggle-presets')) {
             commentMenuEl.style.display = 'none';
+        }
+        const ccMenu = document.getElementById('bt-cc-menu');
+        if (ccMenu && !e.target.closest('#bt-cc-wrap')) {
+            ccMenu.style.display = 'none';
         }
     });
 
