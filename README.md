@@ -1,4 +1,4 @@
-# 🪆 Backtest Auto-Logger (v2.0)
+# 🪆 Backtest Auto-Logger
 
 Логгер сделок из **TradingView** для **Excel** и **Google Таблицы**, разработанный специально для ведения журналов.
 
