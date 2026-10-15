@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  Экспорт сделок из TradingView в Excel и Google Таблицы
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
@@ -153,7 +153,7 @@
         error_poi: 'Ошибка выбора POI',
         emotion: 'Эмоциональное состояние',
         comment: 'Комментарий',
-        comment_30: 'Комментарий (с авто-шаблоном)',
+        comment_30: 'Комментарий (30 сд.)',
         screenshot: 'Скриншот (ссылка)',
         aoi_num: '№ зоны / области',
         tf_ok: 'ТФ по системе (да)',
@@ -235,6 +235,7 @@
     let manualSessionOverride = null;
     let screenshotUrl = '';
     let lastSelectedToolId = null;
+    let lastChartSelectedId = null;
     let lastHoveredToolId = null;
     let isSettingsOpen = false;
     let showColumnEditor = false;
@@ -443,30 +444,8 @@
                     if (selTool) return getToolId(selTool);
                 }
             }
-            if (typeof model.previousSelectedDrawingOrGroupIds === 'function') {
-                const prevIds = model.previousSelectedDrawingOrGroupIds();
-                if (Array.isArray(prevIds) && prevIds.length > 0) {
-                    const tools = typeof model.allLineTools === 'function' ? model.allLineTools() : [];
-                    const list = Array.isArray(tools) ? tools : Object.values(tools || {});
-                    const match = list.find(t => isSupportedTool(t) && prevIds.includes(getToolId(t)));
-                    if (match) return getToolId(match);
-                }
-            }
         } catch (e) {}
         return null;
-    }
-
-    function getHourInTz(dateObj, timeZone) {
-        try {
-            const parts = new Intl.DateTimeFormat('ru-RU', {
-                timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-            }).formatToParts(dateObj);
-            const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10) % 24;
-            const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
-            return h + (m / 60);
-        } catch (e) {
-            return dateObj.getUTCHours() + (dateObj.getUTCMinutes() / 60);
-        }
     }
 
     function getMskHourDecimal(dateObj) {
@@ -478,21 +457,18 @@
         if (!timestamp) return { std: 'Лондон', eu_us: 'Европа' };
         const d = new Date(timestamp * 1000);
         const mskH = getMskHourDecimal(d);
-        const nyH = getHourInTz(d, 'America/New_York');
 
         let std = 'Азия';
-        if (mskH >= 15.0 && mskH < 23.0 && nyH >= 8.0) {
+        if (mskH >= 15.0 && mskH < 23.0) {
             std = 'Нью-Йорк';
-        } else if (mskH >= 9.0 && mskH < 16.5) {
+        } else if (mskH >= 8.0 && mskH < 15.0) {
             std = 'Лондон';
-        } else if (mskH >= 16.5 && mskH < 23.0) {
-            std = 'Нью-Йорк';
         }
 
         let eu_us = 'Азия';
         if (mskH >= 15.5 && mskH < 23.0) {
             eu_us = 'Америка';
-        } else if (mskH >= 9.0 && mskH < 15.5) {
+        } else if (mskH >= 8.0 && mskH < 15.5) {
             eu_us = 'Европа';
         }
 
@@ -553,6 +529,15 @@
     }
 
     function resolveBarTimestamp(model, bars, barIdx, tool, points) {
+        const pt0 = tool?._points?.[0] || points?.[0];
+        const rawPtTime = normalizeUnixSeconds(pt0?.time_t || pt0?.time?.getTime?.() || pt0?.time);
+
+        const row = getPlotRow(bars, barIdx);
+        if (row) {
+            const rt = normalizeUnixSeconds(row[0]);
+            if (rt) return rt;
+        }
+
         try {
             const ts = typeof model.timeScale === 'function' ? model.timeScale() : model._timeScale;
             if (ts && barIdx != null && typeof ts.indexToTimePoint === 'function') {
@@ -561,16 +546,7 @@
             }
         } catch (e) {}
 
-        const row = getPlotRow(bars, barIdx);
-        if (row) {
-            const rt = normalizeUnixSeconds(row[0]);
-            if (rt) return rt;
-        }
-
-        const pt0 = tool?._points?.[0] || points?.[0];
-        const ptTime = normalizeUnixSeconds(pt0?.time_t || pt0?.time?.getTime?.() || pt0?.time);
-        if (ptTime) return ptTime;
-
+        if (rawPtTime) return rawPtTime;
         return Math.floor(Date.now() / 1000);
     }
 
@@ -678,13 +654,15 @@
         }
 
         const effectiveIdx = barAnalysis.triggerIdx ?? startIdx;
-        const time = resolveBarTimestamp(model, bars, startIdx ?? effectiveIdx, tool, points);
+        const time = resolveBarTimestamp(model, bars, effectiveIdx ?? startIdx, tool, points);
 
         const rawSymbol = readWatched(props?.symbol) || symInfo.name || 'XAUUSD';
         const cleanSymbol = String(rawSymbol).split(':').pop();
         const rawInterval = readWatched(props?.interval) || '15';
 
-        const decimals = symInfo.pricescale ? Math.round(Math.log10(symInfo.pricescale)) : 2;
+        const decimals = symInfo.pricescale
+            ? Math.max(0, Math.round(Math.log10(symInfo.pricescale)))
+            : (priceStep < 1 ? Math.min(8, priceStep.toFixed(8).replace(/0+$/, '').split('.')[1]?.length || 2) : 2);
 
         const entryR = Number(entry.toFixed(decimals));
         const stopR = Number(stop.toFixed(decimals));
@@ -758,12 +736,16 @@
             parsed.sort((a, b) => a.time - b.time);
             allChartTrades = parsed;
 
-            let targetId = detectCurrentlySelectedToolId(model);
-            if (targetId) lastSelectedToolId = targetId;
-
-            if (!targetId && lastSelectedToolId && parsed.some(p => p.id === lastSelectedToolId)) {
-                targetId = lastSelectedToolId;
+            const chartSelId = detectCurrentlySelectedToolId(model);
+            if (chartSelId !== lastChartSelectedId) {
+                lastChartSelectedId = chartSelId;
+                if (chartSelId) lastSelectedToolId = chartSelId;
             }
+
+            let targetId = (lastSelectedToolId && parsed.some(p => p.id === lastSelectedToolId))
+                ? lastSelectedToolId
+                : chartSelId;
+
             if (!targetId && lastHoveredToolId && parsed.some(p => p.id === lastHoveredToolId)) {
                 targetId = lastHoveredToolId;
             }
@@ -1045,7 +1027,7 @@
                     </button>
                 </div>
 
-                <div class="bt-lbl">1. ШАБЛОН ЖУРНАЛА</div>
+                <div class="bt-lbl">ШАБЛОН ЖУРНАЛА</div>
                 <select id="bt-preset-select" class="bt-sel" style="border-color:#e5c158; color:#f3d26b; font-weight:600; margin-bottom:10px;">
                     <option value="bt_main">📘 1. Бэктест «Матрёшка» (20 переменных)</option>
                     <option value="bt_30">📊 2. Бэктест 30 сделок (30_trades.xlsx)</option>
@@ -1095,20 +1077,24 @@
             <div id="bt-main-view">
                 <div id="bt-dynamic-fields"></div>
 
-                <div id="bt-extra-inputs" style="display:flex; gap:6px; margin-top:4px; margin-bottom:7px;">
-                    <input type="text" id="bt-inp-comment" list="bt-comment-presets" placeholder="Комментарий к сделке (Tab)..." style="flex:1; background:#141418; border:1px solid #2a2a32; color:#ffffff; padding:7px 9px; border-radius:6px; font-size:11.5px; outline:none;">
-                    <datalist id="bt-comment-presets">
-                        <option value="7 из 7 — по закрытой свече"></option>
-                        <option value="рано — приманка не снята"></option>
-                        <option value="зона против потока"></option>
-                        <option value="стоп за тень — не за зону"></option>
-                        <option value="цель дальше ближайшей 0.5"></option>
-                        <option value="догонял движение"></option>
-                        <option value="внутри проторговки"></option>
-                        <option value="по бледной свече"></option>
-                        <option value="зона с касанием 2"></option>
-                        <option value="по правилам — рынок не пошёл"></option>
-                    </datalist>
+                <div id="bt-extra-inputs" style="position:relative; display:flex; gap:6px; margin-top:4px; margin-bottom:7px;">
+                    <div style="position:relative; flex:1; display:flex; align-items:center;">
+                        <input type="text" id="bt-inp-comment" autocomplete="off" placeholder="Комментарий к сделке (Tab)..." style="width:100%; box-sizing:border-box; background:#141418; border:1px solid #2a2a32; color:#ffffff; padding:7px 44px 7px 9px; border-radius:6px; font-size:11.5px; outline:none;">
+                        <button type="button" id="bt-clear-comment" title="Очистить комментарий" style="position:absolute; right:22px; background:transparent; border:none; color:#71717a; cursor:pointer; font-size:11px; padding:2px 4px;">✕</button>
+                        <button type="button" id="bt-toggle-presets" title="Выбрать готовый шаблон комментария" style="position:absolute; right:4px; background:transparent; border:none; color:#e5c158; cursor:pointer; font-size:11px; padding:2px 5px;">▾</button>
+                    </div>
+                    <div id="bt-comment-menu" class="bt-no-scroll" style="display:none; position:absolute; bottom:36px; left:0; width:285px; max-height:185px; overflow-y:auto; background:#18181e; border:1px solid #3d3522; border-radius:6px; box-shadow:0 10px 25px rgba(0,0,0,0.85); z-index:100; padding:4px;">
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">7 из 7 — по закрытой свече</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">рано — приманка не снята</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">зона против потока</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">стоп за тень — не за зону</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">цель дальше ближайшей 0.5</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">догонял движение</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">внутри проторговки</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">по бледной свече</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">зона с касанием 2</div>
+                        <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">по правилам — рынок не пошёл</div>
+                    </div>
                     <button type="button" id="bt-screen-pill" title="Нажмите Alt+S в TradingView, затем Ctrl+V в окне" style="background:#16161a; color:#d4d4d8; border:1px solid #2a2a32; border-radius:6px; padding:0 10px; font-size:11.5px; font-weight:500; cursor:pointer; white-space:nowrap; transition:0.15s;">
                         📸 Скрин
                     </button>
@@ -1188,6 +1174,7 @@
         .bt-drag-pill { background:#1a1a20; color:#f4f4f5; border:1px solid #383844; border-radius:5px; padding:3px 7px; font-size:10.5px; cursor:grab; display:inline-flex; align-items:center; gap:5px; transition:transform 0.1s ease, border-color 0.1s ease; }
         .bt-drag-pill.dragging-active { background:#2a2515; border-color:#f3d26b; color:#f3d26b; transform:scale(1.05); z-index:10; cursor:grabbing; box-shadow:0 4px 12px rgba(0,0,0,0.6); }
         .bt-del-col { color:#f23645; font-weight:bold; cursor:pointer; padding:0 2px; font-size:11px; }
+        .bt-cm-item:hover { background:rgba(229,193,88,0.18); color:#f3d26b !important; }
         #bt-quick-copy-prices:hover { border-color:rgba(229,193,88,0.55); }
     </style>
     `;
@@ -1206,6 +1193,8 @@
     const mainBtnText = document.getElementById('bt-main-btn-text');
     const screenPillBtn = document.getElementById('bt-screen-pill');
     const sessionPillBtn = document.getElementById('bt-session-pill');
+    const commentInpEl = document.getElementById('bt-inp-comment');
+    const commentMenuEl = document.getElementById('bt-comment-menu');
     let toastTimer = null;
 
     function showToast(msg, type = 'success') {
@@ -1305,20 +1294,12 @@
         const touch = getChipVal('f-touch30', '1');
         const against = getChipVal('f-against30', 'нет');
         const swept = document.getElementById('f-swept')?.value || 'приманка';
-        const commentInp = document.getElementById('bt-inp-comment');
 
         if (swept === 'ничего не снято') {
             setChipVal('f-check30', 'нет');
             const lvlInp = document.getElementById('f-swept-lvl');
             if (lvlInp) lvlInp.value = '';
-            if (commentInp && !commentInp.value) commentInp.value = 'рано — приманка не снята';
-        } else if (against === 'да') {
-            setChipVal('f-check30', 'нет');
-            if (commentInp && !commentInp.value) commentInp.value = 'зона против потока';
-        } else if (touch !== '1') {
-            setChipVal('f-check30', 'нет');
-            if (commentInp && !commentInp.value) commentInp.value = 'зона с касанием 2';
-        } else if (fuel === 'нет') {
+        } else if (against === 'да' || touch !== '1' || fuel === 'нет') {
             setChipVal('f-check30', 'нет');
         } else {
             setChipVal('f-check30', 'да');
@@ -1707,6 +1688,7 @@
 
         if (currentTrade.id !== prevId) {
             manualSessionOverride = null;
+            if (commentInpEl) commentInpEl.value = '';
             renderMainFields();
             updateHeaderUI();
             pulseTradeCard('#089981');
@@ -1737,7 +1719,10 @@
         if (!model) return;
 
         const selId = detectCurrentlySelectedToolId(model);
-        if (selId) lastSelectedToolId = selId;
+        if (selId !== lastChartSelectedId) {
+            lastChartSelectedId = selId;
+            if (selId) lastSelectedToolId = selId;
+        }
 
         try {
             const hov = typeof model.hoveredSource === 'function' ? model.hoveredSource() : model._hoveredSource;
@@ -1980,10 +1965,8 @@
         const lotsOff = Number(((10000 * 0.003) / (stopUsd / 0.01 * 1)).toFixed(2));
         const rOutOff = resStd === 'Стоп' ? -1 : (resStd === 'Тейк' ? Number((0.5 * 3 + 0.5 * t.riskReward).toFixed(2)) : 0);
 
-        const comment = cleanText(document.getElementById('bt-inp-comment').value);
+        const comment = cleanText(commentInpEl?.value || '');
         const chk30 = getChipVal('f-check30', 'да');
-        let autoComment30 = '7 из 7 — по закрытой свече';
-        if (chk30 === 'да' && res30Val === 'стоп') autoComment30 = 'по правилам — рынок не пошёл';
         const img = cleanText(screenshotUrl);
         const sweptVal = document.getElementById('f-swept')?.value || 'приманка';
         const sweptLvlRaw = cleanText(document.getElementById('f-swept-lvl')?.value || '');
@@ -2036,7 +2019,7 @@
             error: document.getElementById('f-err')?.value || '—',
             error_poi: document.getElementById('f-err')?.value || '—',
             comment: comment,
-            comment_30: comment || autoComment30,
+            comment_30: comment,
             screenshot: img,
             aoi_num: aoiNum,
             flow_d: flD,
@@ -2091,7 +2074,8 @@
                 flowD: flD, flow4H: fl4H, flow1H: fl1H, flow15M: fl15M
             });
 
-            document.getElementById('bt-inp-comment').value = '';
+            if (commentInpEl) commentInpEl.value = '';
+            if (commentMenuEl) commentMenuEl.style.display = 'none';
             screenshotUrl = '';
             manualSessionOverride = null;
             updateHeaderUI();
@@ -2234,7 +2218,10 @@
         activeTradeIdx = (activeTradeIdx + delta + allChartTrades.length) % allChartTrades.length;
         currentTrade = allChartTrades[activeTradeIdx];
         lastSelectedToolId = currentTrade.id;
+        lastChartSelectedId = detectCurrentlySelectedToolId(getTvModel());
         manualSessionOverride = null;
+        if (commentInpEl) commentInpEl.value = '';
+        if (commentMenuEl) commentMenuEl.style.display = 'none';
         renderMainFields();
         updateHeaderUI();
         pulseTradeCard('#089981');
@@ -2250,6 +2237,29 @@
             showToast('✓ Скопированы 3 цены: Вход + Стоп + Цель!');
         });
     };
+
+    document.getElementById('bt-clear-comment').onclick = () => {
+        commentInpEl.value = '';
+        commentInpEl.focus();
+    };
+
+    document.getElementById('bt-toggle-presets').onclick = e => {
+        e.stopPropagation();
+        commentMenuEl.style.display = commentMenuEl.style.display === 'block' ? 'none' : 'block';
+    };
+
+    commentMenuEl.querySelectorAll('.bt-cm-item').forEach(item => {
+        item.onclick = () => {
+            commentInpEl.value = item.innerText;
+            commentMenuEl.style.display = 'none';
+        };
+    });
+
+    modalEl.addEventListener('click', e => {
+        if (!e.target.closest('#bt-comment-menu') && !e.target.closest('#bt-toggle-presets')) {
+            commentMenuEl.style.display = 'none';
+        }
+    });
 
     mainCopyBtn.onclick = buildAndCopyRow;
     document.getElementById('bt-close-x').onclick = () => { modalEl.style.display = 'none'; };
@@ -2281,8 +2291,11 @@
     })();
 
     function openModal() {
+        lastChartSelectedId = null;
         if (!scanChartTrades(false)) return;
         manualSessionOverride = null;
+        if (commentInpEl) commentInpEl.value = '';
+        if (commentMenuEl) commentMenuEl.style.display = 'none';
         toggleSettingsView(false);
         renderMainFields();
         updateHeaderUI();
@@ -2340,7 +2353,9 @@
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            if (inOurInput) {
+            if (commentMenuEl && commentMenuEl.style.display === 'block') {
+                commentMenuEl.style.display = 'none';
+            } else if (inOurInput) {
                 e.target.blur();
                 modalEl.focus();
             } else if (isSettingsOpen) {
@@ -2363,7 +2378,7 @@
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            document.getElementById('bt-inp-comment')?.focus();
+            commentInpEl?.focus();
             return;
         }
 
