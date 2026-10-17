@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.7
 // @description  Экспорт сделок из TradingView в Excel и Google Таблицы
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
@@ -20,7 +20,16 @@
     const isMac = /Mac|iPod|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
     const LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="7" r="4.5" stroke="#e5c158" stroke-width="2"/><path d="M5.5 19.5C5.5 15.634 8.41015 12.5 12 12.5C15.5899 12.5 18.5 15.634 18.5 19.5C18.5 20.8807 17.3807 22 16 22H8C6.61929 22 5.5 20.8807 5.5 19.5Z" stroke="#e5c158" stroke-width="2"/><circle cx="12" cy="17.5" r="1.5" fill="#e5c158"/></svg>`;
-    const BOLT = `<span class="bt-bolt" title="Определено автоматически по данным графика">⚡</span>`;
+    const BOLT = `<span class="bt-bolt" title="Заполнено автоматически по графику">⚡</span>`;
+
+    const CANDLE_COLORS = {
+        'Лонг 3': { hex: '#72f238', hint: 'салатовая' },
+        'Лонг 2': { hex: '#4bb8d4', hint: 'голубая' },
+        'Лонг 1': { hex: '#3b7dff', hint: 'синяя' },
+        'Шорт 3': { hex: '#f7e84b', hint: 'жёлтая' },
+        'Шорт 2': { hex: '#eb3b4b', hint: 'красная' },
+        'Шорт 1': { hex: '#8a2bbd', hint: 'фиолетовая' }
+    };
 
     const PRESET_SCHEMAS = {
         bt_main: {
@@ -112,11 +121,11 @@
         flow_1h: 'Поток H1',
         flow_15m: 'Поток M15',
         struct_30: 'Структура перед входом',
-        zone: 'Зона интереса (основная)',
-        zone_30: 'Вид зоны (детальный)',
+        zone: 'Зона входа',
+        zone_30: 'Вид зоны',
         poi_type: 'Тип POI (OB / Имб / МС)',
         form_m1: 'Формация входа M1',
-        candle_col: 'Импульс свечи (индикатор)',
+        candle_col: 'Свеча входа (цвет)',
         liq: 'Снятие ликвидности (да/нет)',
         swept_30: 'Что снято перед входом',
         swept_level_30: 'Уровень снятия (цена)',
@@ -133,11 +142,11 @@
         risk_pts: 'Риск в пунктах / $',
         pot_pts: 'Потенциал в пунктах',
         rr: 'Соотношение R:R',
-        lots_30: 'Объём (лот, фьючерс/форекс)',
+        lots_30: 'Объём (лот)',
         lots_off: 'Объём (лот от % риска)',
-        check_30: 'Соблюдение чек-листа (да/нет)',
+        check_30: 'Чек-лист 7/7 (да/нет)',
         result: 'Результат (Тейк/Стоп/БУ)',
-        res_30: 'Исход (с ручным выходом)',
+        res_30: 'Исход сделки',
         res_off: 'Результат (с сейфом)',
         manual_r_30: 'Фактический R (вручную)',
         r_out: 'Итог сделки, R',
@@ -147,8 +156,8 @@
         move_pts: 'Взятое движение, п.',
         cum_r: 'Накопительный итог, R',
         dd_r: 'Просадка, R',
-        hit_1r: 'Достижение 1:1 (да/нет)',
-        hit_3r: 'Достижение 1:3 (да/нет)',
+        hit_1r: 'Дошла до 1:1 (да/нет)',
+        hit_3r: 'Дошла до 1:3 (да/нет)',
         error: 'Причина ошибки',
         error_poi: 'Ошибка выбора POI',
         emotion: 'Эмоциональное состояние',
@@ -171,17 +180,40 @@
         empty: 'Пустая ячейка (пропуск)'
     };
 
+    const SHORT_COL_NAMES = {
+        symbol: 'Тикер', date: 'Дата', time_msk: 'Время', time_slot: 'Слот',
+        session: 'Сессия', tf: 'ТФ', dir_title: 'Направл.', dir_lower: 'Сторона',
+        trend: 'Фаза', trend_h4: 'Тренд H4', flow_d: 'Поток Д', flow_4h: 'Поток 4Ч',
+        flow_1h: 'Поток 1Ч', flow_15m: 'Поток 15м', struct_30: 'Структура',
+        zone: 'Зона', zone_30: 'Вид зоны', poi_type: 'POI', form_m1: 'Формация',
+        candle_col: 'Свеча', liq: 'Ликв.', swept_30: 'Снято', swept_level_30: 'Ур. снятия',
+        fuel_30: 'Топливо', touch_30: 'Касание', against_flow: 'Против пот.',
+        conf: 'Подтв.', react: 'Реакция', entry: 'Вход', stop: 'Стоп', target: 'Цель',
+        upper_bound: 'Верх', lower_bound: 'Низ', risk_pts: 'Риск п.', pot_pts: 'Потенц.',
+        rr: 'R:R', lots_30: 'Лоты', lots_off: 'Объём', check_30: 'Чек 7/7',
+        result: 'Результат', res_30: 'Исход', res_off: 'Исход', manual_r_30: 'R ручн.',
+        r_out: 'Итог R', r_out_off: 'Итог RR', profit_usd: 'Итог $', prof_pct_off: 'Профит %',
+        move_pts: 'Ход цены', cum_r: 'Накоп. R', dd_r: 'Просадка', hit_1r: '1:1', hit_3r: '1:3',
+        error: 'Ошибка', error_poi: 'Ошибка', emotion: 'Эмоция', comment: 'Коммент.',
+        comment_30: 'Коммент.', screenshot: 'Скрин', aoi_num: '№ AOI', tf_ok: 'ТФ ок',
+        safe_pct: 'Сейф %', safe_rr: 'Сейф RR', risk_pct_col: 'Риск %',
+        f_ret: 'Откат', f_ob: 'OB H4', f_fvg: 'Имб H4', f_liq: 'Ликв',
+        factors_cnt: 'Факторы', valid_aoi: 'Валидна', reached: 'Дошла', aoi_res: 'Итог AOI',
+        empty: 'Пусто'
+    };
+
     const defaultState = {
         presetKey: 'bt_main',
         customColumns: null,
         customPasteCol: 'B',
         customStartRow: 2,
-        outputProfile: 'ru_form',
+        outputProfile: 'gs_ru',
         decimalSep: ',',
         trend: 'Тренд вверх',
         zone: 'Ордер-блок',
         liq: 'да',
         conf: 'Слом структуры',
+        struct30: '',
         aoiNum: 1,
         flowD: 'вверх',
         flow4H: 'вверх',
@@ -197,8 +229,8 @@
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
             const parsed = raw ? { ...defaultState, ...JSON.parse(raw) } : { ...defaultState };
-            if (parsed.outputProfile !== 'ru_form' && parsed.outputProfile !== 'en_form') {
-                parsed.outputProfile = 'ru_form';
+            if (!['gs_ru', 'ru_form', 'en_form'].includes(parsed.outputProfile)) {
+                parsed.outputProfile = 'gs_ru';
             }
             return parsed;
         } catch (e) {
@@ -239,6 +271,7 @@
     let lastHoveredToolId = null;
     let isSettingsOpen = false;
     let showColumnEditor = false;
+    let isFixHelpOpen = false;
 
     function getPlotRow(plotsObj, idx) {
         if (!plotsObj || idx == null) return null;
@@ -288,7 +321,7 @@
     }
 
     function readMatryoshkaIndicators(model, entryTime, triggerIdx, isLong) {
-        const result = { flows: null, candleColor: null, detectedStructure: null };
+        const result = { flows: null, candleColor: null };
         if (!model || typeof model.dataSources !== 'function') return result;
 
         try {
@@ -321,33 +354,6 @@
                             else if (label === '15м') flows.m15 = dirWord;
                         }
                         if (Object.keys(flows).length > 0) result.flows = flows;
-                    }
-
-                    const plots = typeof s.plots === 'function' ? s.plots() : s._data?.bars?.();
-                    const foundBar = findPlotRowByIndexOrTime(plots, entryTime, triggerIdx);
-                    if (foundBar && plots) {
-                        let countCont = 0, hasChange = false, hasFakeout = false, hasInnerChange = false;
-                        for (let idx = Math.max(0, foundBar.index - 40); idx <= foundBar.index; idx++) {
-                            const v = getPlotRow(plots, idx);
-                            if (!v) continue;
-                            if (v[5] === 1) countCont++;
-                            if (v[6] === 1) hasChange = true;
-                            if (v[7] === 1) hasFakeout = true;
-                            if (v[9] === 1) hasInnerChange = true;
-                        }
-                        if (hasFakeout) {
-                            result.detectedStructure = isLong ? 'ложный пробой ↓ · слом ↑' : 'ложный пробой ↑ · слом ↓';
-                        } else if (hasChange && countCont >= 2) {
-                            result.detectedStructure = isLong ? 'пробой ↓ · пробой ↓ · слом ↑' : 'пробой ↑ · пробой ↑ · слом ↓';
-                        } else if (hasChange) {
-                            result.detectedStructure = isLong ? 'слом ↑' : 'слом ↓';
-                        } else if (hasInnerChange) {
-                            result.detectedStructure = isLong ? 'внутр. слом ↑' : 'внутр. слом ↓';
-                        } else if (countCont >= 2) {
-                            result.detectedStructure = isLong ? 'пробой ↑ · пробой ↑' : 'пробой ↓ · пробой ↓';
-                        } else if (countCont === 1) {
-                            result.detectedStructure = isLong ? 'пробой ↑' : 'пробой ↓';
-                        }
                     }
                 }
 
@@ -442,6 +448,15 @@
                     const list = Array.isArray(tools) ? tools : Object.values(tools || {});
                     const selTool = list.find(t => isSupportedTool(t) && sel.isSelected(t));
                     if (selTool) return getToolId(selTool);
+                }
+            }
+            if (typeof model.previousSelectedDrawingOrGroupIds === 'function') {
+                const prevIds = model.previousSelectedDrawingOrGroupIds();
+                if (Array.isArray(prevIds) && prevIds.length > 0) {
+                    const tools = typeof model.allLineTools === 'function' ? model.allLineTools() : [];
+                    const list = Array.isArray(tools) ? tools : Object.values(tools || {});
+                    const match = list.find(t => isSupportedTool(t) && prevIds.includes(getToolId(t)));
+                    if (match) return getToolId(match);
                 }
             }
         } catch (e) {}
@@ -559,11 +574,11 @@
             return { outcome: 'Тейк', reached1R: true, reached3R: true, entryCandleExtreme: null, triggerIdx: startIndex ?? 0 };
         }
 
-        const anchorIdx = startIndex;
-        const to = Math.max(anchorIdx, endIndex ?? anchorIdx);
+        const from = Math.min(startIndex, endIndex ?? startIndex);
+        const to = Math.max(startIndex, endIndex ?? startIndex);
 
-        let triggerIdx = anchorIdx;
-        for (let i = anchorIdx; i <= to; i++) {
+        let triggerIdx = from;
+        for (let i = from; i <= to; i++) {
             const b = getPlotRow(bars, i);
             if (!b) continue;
             const hi = Number(b[2]), lo = Number(b[3]);
@@ -574,7 +589,7 @@
         }
 
         let sweepExtreme = null;
-        for (let i = Math.max(0, triggerIdx - 2); i <= triggerIdx; i++) {
+        for (let i = triggerIdx - 2; i <= triggerIdx; i++) {
             const b = getPlotRow(bars, i);
             if (!b) continue;
             const hi = Number(b[2]), lo = Number(b[3]);
@@ -672,7 +687,7 @@
         const id = getToolId(tool);
 
         const ind = readMatryoshkaIndicators(model, time, effectiveIdx, isLong);
-        const signature = `${id}_${startIdx}_${endIdx}_${entryR}_${stopR}_${targetR}`;
+        const signature = `${id}_${startIdx}_${endIdx}_${entryR}_${stopR}_${targetR}_${extremeR}`;
 
         return {
             id,
@@ -705,11 +720,11 @@
         };
     }
 
-    function scanChartTrades(silent = false) {
+    function scanChartTrades(silent = false, preferChartSelection = false) {
         try {
             const model = getTvModel();
             if (!model) {
-                if (!silent) showToast('График TradingView еще не загружен', 'error');
+                if (!silent) showToast('График ещё не загружен', 'error');
                 return false;
             }
 
@@ -720,7 +735,7 @@
 
             const matchingTools = list.filter(isSupportedTool);
             if (!matchingTools.length) {
-                if (!silent) showToast('Нарисуйте на графике инструмент «Длинная или Короткая позиция»!', 'error');
+                if (!silent) showToast('Нарисуйте на графике инструмент «Длинная» или «Короткая позиция»', 'error');
                 return false;
             }
 
@@ -737,9 +752,12 @@
             allChartTrades = parsed;
 
             const chartSelId = detectCurrentlySelectedToolId(model);
-            if (chartSelId !== lastChartSelectedId) {
+            if (preferChartSelection && chartSelId) {
                 lastChartSelectedId = chartSelId;
-                if (chartSelId) lastSelectedToolId = chartSelId;
+                lastSelectedToolId = chartSelId;
+            } else if (chartSelId && chartSelId !== lastChartSelectedId) {
+                lastChartSelectedId = chartSelId;
+                lastSelectedToolId = chartSelId;
             }
 
             let targetId = (lastSelectedToolId && parsed.some(p => p.id === lastSelectedToolId))
@@ -773,7 +791,7 @@
 
             return true;
         } catch (e) {
-            if (!silent) showToast('Ошибка чтения инструмента на графике', 'error');
+            if (!silent) showToast('Не удалось прочитать инструмент на графике', 'error');
             return false;
         }
     }
@@ -835,17 +853,19 @@
     }
 
     function buildDynamicFormula(tok, cols, pasteCol, startRow, fallbackVal) {
-        const isRu = (state.outputProfile === 'ru_form');
-        const s = isRu ? ';' : ',';
-        const IF = isRu ? 'ЕСЛИ' : 'IF';
-        const OR = isRu ? 'ИЛИ' : 'OR';
-        const IFERROR = isRu ? 'ЕСЛИОШИБКА' : 'IFERROR';
-        const COUNT = isRu ? 'СЧЁТ' : 'COUNT';
-        const COUNTIF = isRu ? 'СЧЁТЕСЛИ' : 'COUNTIF';
-        const SUM = isRu ? 'СУММ' : 'SUM';
-        const MAX = isRu ? 'МАКС' : 'MAX';
-        const INT = isRu ? 'ЦЕЛОЕ' : 'INT';
-        const ROUND = isRu ? 'ОКРУГЛ' : 'ROUND';
+        const prof = state.outputProfile;
+        const isRuNames = (prof === 'ru_form');
+        const s = (prof === 'en_form') ? ',' : ';';
+
+        const IF = isRuNames ? 'ЕСЛИ' : 'IF';
+        const OR = isRuNames ? 'ИЛИ' : 'OR';
+        const IFERROR = isRuNames ? 'ЕСЛИОШИБКА' : 'IFERROR';
+        const COUNT = isRuNames ? 'СЧЁТ' : 'COUNT';
+        const COUNTIF = isRuNames ? 'СЧЁТЕСЛИ' : 'COUNTIF';
+        const SUM = isRuNames ? 'СУММ' : 'SUM';
+        const MAX = isRuNames ? 'МАКС' : 'MAX';
+        const INT = isRuNames ? 'ЦЕЛОЕ' : 'INT';
+        const ROUND = isRuNames ? 'ОКРУГЛ' : 'ROUND';
 
         const baseOffset = colLetterToIndex(pasteCol);
         const findCol = (...names) => {
@@ -855,7 +875,7 @@
             }
             return null;
         };
-        const ref = (colLet) => isRu ? `ИНДЕКС(${colLet}:${colLet};СТРОКА())` : `INDEX(${colLet}:${colLet},ROW())`;
+        const ref = (colLet) => isRuNames ? `ИНДЕКС(${colLet}:${colLet}${s}СТРОКА())` : `INDEX(${colLet}:${colLet}${s}ROW())`;
         const vRef = (...names) => {
             const colLet = findCol(...names);
             return colLet ? ref(colLet) : null;
@@ -943,7 +963,7 @@
         if (tok === 'lots_off') {
             const en = vRef('entry'), st = vRef('stop'), rskPct = vRef('risk_pct_col');
             if (!en || !st || !rskPct || state.presetKey !== 'office') return fallbackVal;
-            return `=${IF}(${OR}(${en}=""${s}${st}=""${s}${en}=${st})${s}""${s}${ROUND}('Итоги месяца'!$B$2*${rskPct}/(ABS(${en}-${st})/0.01*'Итоги месяца'!$B$3)${s}2))`;
+            return `=${IF}(${OR}(${en}=""${s}${st}=""${s}${en}=${st})${s}""${s}${ROUND}('Итоги месяца'!$B$2*${rskPct}/(ABS(${en}-${st})/${numStr(0.01)}*'Итоги месяца'!$B$3)${s}2))`;
         }
 
         if (tok === 'r_out_off') {
@@ -968,7 +988,7 @@
     }
 
     const addTokenOptionsHtml = Object.entries(TOKEN_LABELS)
-        .map(([k, v]) => `<option value="${k}">+ Добавить переменную: ${v}</option>`)
+        .map(([k, v]) => `<option value="${k}">+ Добавить поле: ${v}</option>`)
         .join('');
 
     const uiHtml = `
@@ -977,10 +997,10 @@
     <button type="button" id="bt-fab-btn" style="position:fixed; bottom:18px; left:58px; z-index:9999990; display:flex; align-items:center; gap:6px; background:#141417; color:#e5c158; border:1px solid rgba(229,193,88,0.45); border-radius:7px; padding:6px 12px; font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif; font-size:12px; font-weight:600; cursor:pointer; box-shadow:0 4px 16px rgba(0,0,0,0.75); transition:0.15s;">
         ${LOGO_SVG}
         <span>Матрёшка</span>
-        <span style="color:#8a8a93; font-weight:400; font-size:11px;">(${isMac ? '⌃Q' : 'F2'})</span>
+        <span style="color:#9ca3af; font-weight:400; font-size:11px;">(${isMac ? '⌃Q' : 'F2'})</span>
     </button>
 
-    <div id="bt-modal" class="bt-no-scroll" tabindex="-1" style="display:none; outline:none; position:fixed; top:${state.posTop}px; right:${state.posRight}px; z-index:9999999; background:#0d0d10; color:#f4f4f5; padding:13px; border-radius:12px; box-shadow:0 22px 55px rgba(0,0,0,0.92), 0 0 0 1px rgba(229,193,88,0.25); font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif; width:388px; max-height:95vh; overflow-y:auto; box-sizing:border-box; user-select:none;">
+    <div id="bt-modal" class="bt-no-scroll" tabindex="-1" style="display:none; outline:none; position:fixed; top:${state.posTop}px; right:${state.posRight}px; z-index:9999999; background:#0d0d10; color:#f4f4f5; padding:13px; border-radius:12px; box-shadow:0 22px 55px rgba(0,0,0,0.92), 0 0 0 1px rgba(229,193,88,0.25); font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif; width:394px; max-height:95vh; overflow-y:auto; box-sizing:border-box; user-select:none;">
 
         <div id="bt-header-drag" style="display:flex; justify-content:space-between; align-items:center; padding-bottom:9px; margin-bottom:9px; border-bottom:1px solid #222228; cursor:move;">
             <div style="display:flex; align-items:center; gap:7px;">
@@ -989,12 +1009,12 @@
             </div>
 
             <div style="display:flex; align-items:center; gap:4px;">
-                <div style="display:flex; align-items:center; background:#16161a; border:1px solid #2a2a32; border-radius:5px; padding:1px 3px;" title="Переключение между сделками на графике (Стрелки ← / →)">
+                <div style="display:flex; align-items:center; background:#16161a; border:1px solid #2a2a32; border-radius:5px; padding:1px 3px;" title="Переключение между сделками на графике (стрелки ← и →)">
                     <button type="button" id="bt-prev-trade" class="bt-icon-btn">◀</button>
                     <span id="bt-trade-counter" style="font-size:11px; font-weight:700; color:#e5c158; padding:0 5px;">1/1</span>
                     <button type="button" id="bt-next-trade" class="bt-icon-btn">▶</button>
                 </div>
-                <button type="button" id="bt-open-settings" class="bt-top-btn" title="Выбор журнала и настройка переменных">⚙️</button>
+                <button type="button" id="bt-open-settings" class="bt-top-btn" title="Настройки журнала">⚙️</button>
                 <button type="button" id="bt-min-btn" class="bt-top-btn" title="Свернуть или развернуть окно">—</button>
                 <button type="button" id="bt-close-x" class="bt-top-btn" title="Закрыть окно (Esc)">✕</button>
             </div>
@@ -1004,16 +1024,16 @@
             <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; margin-bottom:6px; white-space:nowrap;">
                 <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; min-width:0; overflow:hidden;">
                     <b id="bt-info-sym" style="color:#ffffff; white-space:nowrap;">XAUUSD · M5</b>
-                    <button type="button" id="bt-session-pill" title="Сессия определена автоматически по времени входа. Кликните для ручного переключения" style="background:rgba(229,193,88,0.14); color:#f3d26b; border:1px solid rgba(229,193,88,0.4); border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap;">⚡ Европа</button>
+                    <button type="button" id="bt-session-pill" title="Торговая сессия по времени входа. Нажмите, чтобы изменить" style="background:rgba(229,193,88,0.14); color:#f3d26b; border:1px solid rgba(229,193,88,0.4); border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap;">⚡ Европа</button>
                     <span id="bt-info-date" style="color:#9ca3af; font-size:10.5px; white-space:nowrap;"></span>
                 </div>
                 <span id="bt-info-badge" style="background:#089981; color:#fff; font-size:10.5px; padding:2px 7px; border-radius:4px; font-weight:700; white-space:nowrap; flex-shrink:0;"></span>
             </div>
 
-            <div id="bt-quick-copy-prices" title="Кликните, чтобы скопировать только 3 цены: Вход + Стоп + Цель" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:4px; background:#0e0e11; padding:6px 8px; border-radius:5px; cursor:pointer; border:1px solid #222228; font-size:11.5px; white-space:nowrap; transition:0.12s;">
-                <div><span style="color:#8a8a93; font-size:10px;">Вход </span><b id="bt-info-en" style="color:#ffffff;"></b></div>
-                <div style="text-align:center;"><span style="color:#8a8a93; font-size:10px;">Стоп </span><b id="bt-info-st" style="color:#ffffff;"></b></div>
-                <div style="text-align:right;"><span style="color:#8a8a93; font-size:10px;">Цель </span><b id="bt-info-tg" style="color:#f3d26b;"></b></div>
+            <div id="bt-quick-copy-prices" title="Нажмите, чтобы скопировать только цены: Вход, Стоп и Цель" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:4px; background:#0e0e11; padding:6px 8px; border-radius:5px; cursor:pointer; border:1px solid #222228; font-size:11.5px; white-space:nowrap; transition:0.12s;">
+                <div><span style="color:#9ca3af; font-size:10px;">Вход </span><b id="bt-info-en" style="color:#ffffff;"></b></div>
+                <div style="text-align:center;"><span style="color:#9ca3af; font-size:10px;">Стоп </span><b id="bt-info-st" style="color:#ffffff;"></b></div>
+                <div style="text-align:right;"><span style="color:#9ca3af; font-size:10px;">Цель </span><b id="bt-info-tg" style="color:#f3d26b;"></b></div>
             </div>
         </div>
 
@@ -1021,33 +1041,33 @@
 
             <div id="bt-settings-drawer" style="display:none; background:#141418; border:1px solid #3d3522; border-radius:8px; padding:11px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-bottom:7px; border-bottom:1px solid #26262e;">
-                    <span style="font-size:11.5px; font-weight:700; color:#f3d26b;">⚙️ СХЕМА ЖУРНАЛА И ПЕРЕМЕННЫХ</span>
+                    <span style="font-size:11.5px; font-weight:700; color:#f3d26b;">⚙️ НАСТРОЙКИ ЖУРНАЛА</span>
                     <button type="button" id="bt-close-settings-btn" style="background:#e5c158; color:#09090b; border:none; border-radius:5px; padding:4px 10px; font-size:11px; font-weight:700; cursor:pointer;">
                         ← Готово
                     </button>
                 </div>
 
-                <div class="bt-lbl">ШАБЛОН ЖУРНАЛА</div>
+                <div class="bt-lbl">ШАБЛОН ТАБЛИЦЫ</div>
                 <select id="bt-preset-select" class="bt-sel" style="border-color:#e5c158; color:#f3d26b; font-weight:600; margin-bottom:10px;">
-                    <option value="bt_main">📘 1. Бэктест «Матрёшка» (20 переменных)</option>
+                    <option value="bt_main">📘 1. Бэктест «Матрёшка»</option>
                     <option value="bt_30">📊 2. Бэктест 30 сделок (30_trades.xlsx)</option>
                     <option value="dz_poi">🎯 3. ДЗ: Журнал POI</option>
                     <option value="dz_aoi">🗺️ 4. ДЗ: Таблица AOI</option>
                     <option value="office">🏢 5. Торговый офис (Недели 1–4)</option>
                     <option value="prices_only">⚡ 6. Только 3 цены (Вход / Стоп / Цель)</option>
-                    <option value="custom">✨ 7. Универсальный конструктор (Свой журнал)</option>
+                    <option value="custom">✨ 7. Свой набор колонок</option>
                 </select>
 
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <button type="button" id="bt-toggle-cols-btn" class="bt-mini-pill" style="width:100%; text-align:center; padding:5px;">
-                        🔧 Конструктор переменных и столбцов...
+                        🔧 Настроить колонки таблицы...
                     </button>
                 </div>
 
                 <div id="bt-cols-editor-wrap" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid #26262e;">
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:7px;">
                         <div>
-                            <div class="bt-lbl">СТАРТОВЫЙ СТОЛБЕЦ ВСТАВКИ</div>
+                            <div class="bt-lbl">ПЕРВЫЙ СТОЛБЕЦ ВСТАВКИ</div>
                             <select id="bt-custom-paste-col" class="bt-sel" style="margin-bottom:0; height:26px;">
                                 <option value="A">Столбец A (с 1-й кол.)</option>
                                 <option value="B">Столбец B (после №)</option>
@@ -1056,19 +1076,19 @@
                             </select>
                         </div>
                         <div>
-                            <div class="bt-lbl">1-Я СТРОКА ДАННЫХ (ДЛЯ СУММ)</div>
+                            <div class="bt-lbl">ПЕРВАЯ СТРОКА ДАННЫХ</div>
                             <input type="number" id="bt-custom-start-row" min="1" max="500" value="${getActiveStartRow()}" style="width:100%; height:26px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; border-radius:5px; padding:0 6px; font-size:11px; outline:none;">
                         </div>
                     </div>
 
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; white-space:nowrap;">
-                        <span style="font-size:10px; font-weight:700; color:#9ca3af;">ПОРЯДОК ПЕРЕМЕННЫХ (ПЕРЕТАЩИТЕ МЫШКОЙ):</span>
-                        <button type="button" id="bt-reset-schema" class="bt-mini-pill" style="padding:2px 7px; font-size:10px; white-space:nowrap;">↺ Сбросить</button>
+                        <span style="font-size:10px; font-weight:700; color:#9ca3af;">ПОРЯДОК КОЛОНОК (ПЕРЕТАЩИТЕ МЫШКОЙ):</span>
+                        <button type="button" id="bt-reset-schema" class="bt-mini-pill" style="padding:2px 7px; font-size:10px; white-space:nowrap;">↺ По умолчанию</button>
                     </div>
                     <div id="bt-schema-pills" class="bt-no-scroll" style="display:flex; flex-wrap:wrap; gap:4px; max-height:135px; overflow-y:auto; padding:6px; background:#0b0b0e; border-radius:6px; border:1px solid #27272e; margin-bottom:6px;"></div>
 
                     <select id="bt-add-token-select" class="bt-sel" style="margin-bottom:0; font-size:11px; color:#f3d26b;">
-                        <option value="">+ Добавить переменную графика / сделки...</option>
+                        <option value="">+ Добавить поле в таблицу...</option>
                         ${addTokenOptionsHtml}
                     </select>
                 </div>
@@ -1080,8 +1100,8 @@
                 <div id="bt-extra-inputs" style="position:relative; display:flex; gap:6px; margin-top:4px; margin-bottom:7px;">
                     <div style="position:relative; flex:1; display:flex; align-items:center;">
                         <input type="text" id="bt-inp-comment" autocomplete="off" placeholder="Комментарий к сделке (Tab)..." style="width:100%; box-sizing:border-box; background:#141418; border:1px solid #2a2a32; color:#ffffff; padding:7px 44px 7px 9px; border-radius:6px; font-size:11.5px; outline:none;">
-                        <button type="button" id="bt-clear-comment" title="Очистить комментарий" style="position:absolute; right:22px; background:transparent; border:none; color:#71717a; cursor:pointer; font-size:11px; padding:2px 4px;">✕</button>
-                        <button type="button" id="bt-toggle-presets" title="Выбрать готовый шаблон комментария" style="position:absolute; right:4px; background:transparent; border:none; color:#e5c158; cursor:pointer; font-size:11px; padding:2px 5px;">▾</button>
+                        <button type="button" id="bt-clear-comment" title="Очистить комментарий" style="position:absolute; right:22px; background:transparent; border:none; color:#9ca3af; cursor:pointer; font-size:11px; padding:2px 4px;">✕</button>
+                        <button type="button" id="bt-toggle-presets" title="Выбрать частый комментарий" style="position:absolute; right:4px; background:transparent; border:none; color:#e5c158; cursor:pointer; font-size:11px; padding:2px 5px;">▾</button>
                     </div>
                     <div id="bt-comment-menu" class="bt-no-scroll" style="display:none; position:absolute; bottom:36px; left:0; width:285px; max-height:185px; overflow-y:auto; background:#18181e; border:1px solid #3d3522; border-radius:6px; box-shadow:0 10px 25px rgba(0,0,0,0.85); z-index:100; padding:4px;">
                         <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">7 из 7 — по закрытой свече</div>
@@ -1095,31 +1115,60 @@
                         <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">зона с касанием 2</div>
                         <div class="bt-cm-item" style="padding:5px 8px; font-size:11px; color:#e4e4e7; cursor:pointer; border-radius:4px;">по правилам — рынок не пошёл</div>
                     </div>
-                    <button type="button" id="bt-screen-pill" title="Нажмите Alt+S в TradingView, затем Ctrl+V в окне" style="background:#16161a; color:#d4d4d8; border:1px solid #2a2a32; border-radius:6px; padding:0 10px; font-size:11.5px; font-weight:500; cursor:pointer; white-space:nowrap; transition:0.15s;">
+                    <button type="button" id="bt-screen-pill" title="Сделайте снимок графика (Alt+S) и нажмите Ctrl+V в этом окне" style="background:#16161a; color:#d4d4d8; border:1px solid #2a2a32; border-radius:6px; padding:0 10px; font-size:11.5px; font-weight:500; cursor:pointer; white-space:nowrap; transition:0.15s;">
                         📸 Скрин
                     </button>
                 </div>
 
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:7px; background:#121216; padding:3px; border-radius:6px; border:1px solid #22222a;">
-                    <button type="button" class="bt-prof-btn" data-prof="ru_form" title="Для русских таблиц: дробь через запятую и формулы =ЕСЛИ(...; СТРОКА())">
-                        🇷🇺 RU ( , + ЕСЛИ )
+                <div style="background:#111115; border:1px solid #22222a; border-radius:6px; padding:5px 6px; margin-bottom:6px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span id="bt-preview-hint" style="font-size:9.5px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:0.3px;">СТРОКА ДЛЯ ВСТАВКИ</span>
+                        <button type="button" id="bt-toggle-fix-help" style="background:transparent; border:none; color:#e5c158; font-size:10px; font-weight:600; cursor:pointer; padding:0;">? Ошибка в таблице?</button>
+                    </div>
+                    <div id="bt-row-preview" class="bt-hide-scroll" style="display:flex; gap:4px; overflow-x:auto;"></div>
+                </div>
+
+                <div id="bt-fix-help-box" style="display:none; background:#181612; border:1px solid #4a3f23; border-radius:6px; padding:7px 8px; margin-bottom:7px; font-size:10.5px; color:#d4d4d8;">
+                    <div style="font-weight:700; color:#f3d26b; margin-bottom:5px;">Если после вставки в таблице появилась ошибка:</div>
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <button type="button" class="bt-fix-action" data-fix="gs_ru" style="text-align:left; background:#121216; color:#e4e4e7; border:1px solid #2e2e38; border-radius:4px; padding:5px 7px; font-size:10px; cursor:pointer;">
+                            🔴 Ошибка <b style="color:#f87171;">#ERROR!</b> в Google Таблице → <u style="color:#f3d26b;">Переключить на Google Docs RU и скопировать</u>
+                        </button>
+                        <button type="button" class="bt-fix-action" data-fix="ru_form" style="text-align:left; background:#121216; color:#e4e4e7; border:1px solid #2e2e38; border-radius:4px; padding:5px 7px; font-size:10px; cursor:pointer;">
+                            🔴 Ошибка <b style="color:#f87171;">#ERROR!</b> в программе Excel → <u style="color:#f3d26b;">Переключить на Excel RU и скопировать</u>
+                        </button>
+                        <button type="button" class="bt-fix-action" data-fix="en_form" style="text-align:left; background:#121216; color:#e4e4e7; border:1px solid #2e2e38; border-radius:4px; padding:5px 7px; font-size:10px; cursor:pointer;">
+                            🔴 Шести-семи-значные числа, формулы не принимаются из-за ";" в программе Excel → <u style="color:#f3d26b;">Переключить на EN и скопировать</u>
+                        </button>
+                        <div style="font-size:9.5px; color:#9ca3af; padding:2px 2px 0;">
+                            💡 Если пишет <b>#ЗНАЧ! (#VALUE!)</b> — строка, возможно, была вставлена в столбец <b>A (№)</b>. Выделите в таблице ячейку в столбце <b id="bt-fix-col-lbl" style="color:#f3d26b;">B</b> и нажмите Ctrl+V.
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1.1fr 1fr 0.9fr; gap:3px; margin-bottom:7px; background:#09090c; padding:2px; border-radius:6px; border:1px solid #22222a;">
+                    <button type="button" class="bt-prof-btn" data-prof="gs_ru" title="Для Google Таблиц: числа через запятую, функции IF / INDEX">
+                        📊 Google Docs RU
                     </button>
-                    <button type="button" class="bt-prof-btn" data-prof="en_form" title="Для международных таблиц: дробь через точку и формулы =IF(..., ROW())">
-                        🌐 EN ( . + IF )
+                    <button type="button" class="bt-prof-btn" data-prof="ru_form" title="Для программы Excel на русском языке: числа через запятую, функции ЕСЛИ / ИНДЕКС">
+                        📗 Excel RU
+                    </button>
+                    <button type="button" class="bt-prof-btn" data-prof="en_form" title="Числа через точку, функции IF / INDEX">
+                        🌐 EN
                     </button>
                 </div>
 
                 <div style="display:flex; gap:6px; align-items:stretch;">
-                    <button type="button" id="bt-main-copy-btn" style="flex:1; background:linear-gradient(180deg, #ebd074 0%, #cfa538 100%); color:#09090b; border:none; padding:9px 12px; border-radius:6px; cursor:pointer; font-weight:700; font-size:12.5px; display:flex; justify-content:center; align-items:center; gap:6px; box-shadow:0 3px 12px rgba(229,193,88,0.28);">
+                    <button type="button" id="bt-main-copy-btn" style="flex:1; background:linear-gradient(180deg, #ebd074 0%, #cfa538 100%); color:#09090b; border:none; padding:9px 10px; border-radius:6px; cursor:pointer; font-weight:700; font-size:12px; display:flex; justify-content:center; align-items:center; gap:6px; box-shadow:0 3px 12px rgba(229,193,88,0.28); white-space:nowrap;">
                         <span id="bt-main-btn-text">Скопировать строку (в стлб. B)</span>
                         <kbd style="background:rgba(0,0,0,0.18); color:#09090b; padding:1px 5px; border-radius:3px; font-size:10.5px; font-family:inherit;">↵</kbd>
                     </button>
 
                     <div style="display:flex; align-items:center; background:#141418; border:1px solid #2a2a32; border-radius:6px; overflow:hidden;">
-                        <button type="button" id="bt-copy-batch-btn" title="Скопировать всю накопленную серию сделок сразу" style="background:transparent; color:#e4e4e7; border:none; padding:0 10px; height:100%; font-size:11.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px;">
+                        <button type="button" id="bt-copy-batch-btn" title="Скопировать все сохранённые сделки одним списком" style="background:transparent; color:#e4e4e7; border:none; padding:0 9px; height:100%; font-size:11px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px; white-space:nowrap;">
                             📦 <span id="bt-batch-count" style="color:#f3d26b;">0</span>
                         </button>
-                        <button type="button" id="bt-clear-batch-btn" title="Очистить накопленную серию сделок" style="background:rgba(242,54,69,0.14); color:#f23645; border:none; border-left:1px solid #2a2a32; padding:0 8px; height:100%; font-size:11px; cursor:pointer;">✕</button>
+                        <button type="button" id="bt-clear-batch-btn" title="Очистить список сохранённых сделок" style="background:rgba(242,54,69,0.14); color:#f23645; border:none; border-left:1px solid #2a2a32; padding:0 7px; height:100%; font-size:11px; cursor:pointer;">✕</button>
                     </div>
                 </div>
             </div>
@@ -1130,43 +1179,83 @@
         .bt-no-scroll::-webkit-scrollbar { width:4px; height:4px; }
         .bt-no-scroll::-webkit-scrollbar-track { background:transparent; }
         .bt-no-scroll::-webkit-scrollbar-thumb { background:#2e2e38; border-radius:4px; }
+        .bt-hide-scroll { scrollbar-width:none; -ms-overflow-style:none; }
+        .bt-hide-scroll::-webkit-scrollbar { display:none; width:0; height:0; }
+
         .bt-section-box { background:#121216; border:1px solid #22222a; border-radius:7px; padding:7px 8px; margin-bottom:7px; }
         .bt-lbl { font-size:9.5px; color:#9ca3af; height:13px; line-height:13px; margin-bottom:4px; font-weight:700; text-transform:uppercase; letter-spacing:0.35px; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; }
         .bt-bolt { color:#e5c158; font-size:10px; line-height:1; flex-shrink:0; }
-        .bt-grid-1 { display:grid; grid-template-columns:1fr; gap:4px; margin-bottom:6px; }
-        .bt-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-bottom:6px; }
-        .bt-grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; margin-bottom:6px; }
-        .bt-grid-4 { display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:6px; }
-        .bt-grid-5 { display:grid; grid-template-columns:repeat(5, 1fr); gap:4px; margin-bottom:6px; }
 
-        .bt-chip { position:relative; box-sizing:border-box; width:100%; height:28px; background:#16161b; color:#a1a1aa; border:1px solid #282830; padding:0 7px; font-size:11px; font-weight:500; border-radius:5px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:0.12s ease; white-space:nowrap; }
+        .bt-seg-track { background:#09090c; border:1px solid #252530; border-radius:6px; padding:2px; margin-bottom:6px; box-sizing:border-box; }
+        .bt-grid-1 { display:grid; grid-template-columns:1fr; gap:3px; }
+        .bt-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+        .bt-grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:3px; }
+        .bt-grid-4 { display:grid; grid-template-columns:repeat(4, 1fr); gap:3px; }
+        .bt-grid-5 { display:grid; grid-template-columns:repeat(5, 1fr); gap:2px; }
+
+        .bt-chip { position:relative; box-sizing:border-box; width:100%; height:24px; background:transparent; color:#9ca3af; border:1px solid transparent; padding:0 6px; font-size:11px; font-weight:500; border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:0.12s ease; white-space:nowrap; }
         .bt-chip.bt-chip-centered { justify-content:center; text-align:center; padding:0 4px; }
-        .bt-chip:hover { border-color:#52525b; color:#f4f4f5; background:#1c1c22; }
+        .bt-chip:hover { color:#f4f4f5; background:rgba(255,255,255,0.04); }
         .bt-chip.active {
-            background: var(--ac-bg, rgba(229, 193, 88, 0.16));
-            color: var(--ac-fg, #f7d97e);
-            border-color: var(--ac-bd, rgba(229, 193, 88, 0.62));
+            background: var(--ac-bg, #242014);
+            color: var(--ac-fg, #f3d26b);
+            border-color: var(--ac-bd, rgba(229, 193, 88, 0.58));
+            box-shadow: 0 2px 6px rgba(0,0,0,0.5);
             font-weight: 600;
         }
-        .bt-chip kbd { font-size:9.5px; font-family:inherit; color:#71717a; background:#1e1e24; border:1px solid #2e2e38; padding:0px 4px; border-radius:3px; margin-left:3px; font-weight:600; }
-        .bt-chip.active kbd { background:rgba(255,255,255,0.08); border-color:transparent; color:inherit; }
+        .bt-chip kbd { font-size:9px; font-family:inherit; color:#8a8a93; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:0px 3.5px; border-radius:3px; margin-left:3px; font-weight:600; }
+        .bt-chip.active kbd { background:rgba(0,0,0,0.28); border-color:transparent; color:inherit; }
 
-        .bt-flow-pill { width:100%; height:28px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0 7px; box-sizing:border-box; transition:0.12s ease; border:1px solid #282830; background:#16161b; color:#d4d4d8; }
+        .bt-switch {
+            width:100%; height:28px; box-sizing:border-box; border-radius:6px; padding:0 8px; margin-bottom:6px;
+            background:#14141a; border:1px solid #282834; color:#9ca3af;
+            display:flex; align-items:center; justify-content:space-between; gap:5px;
+            cursor:pointer; transition:all 0.15s ease; outline:none;
+        }
+        .bt-switch:hover { border-color:#454554; color:#e4e4e7; background:#181820; }
+        .bt-sw-txt { font-size:11px; font-weight:600; line-height:1; white-space:nowrap; transition:color 0.15s; }
+        .bt-sw-track {
+            width:26px; height:14px; border-radius:99px; background:#252530; border:1px solid #3a3a48;
+            position:relative; flex-shrink:0; transition:all 0.18s ease; box-sizing:border-box;
+        }
+        .bt-sw-thumb {
+            width:10px; height:10px; border-radius:50%; background:#9ca3af;
+            position:absolute; top:1px; left:1px;
+            transition:transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), background 0.18s ease;
+            box-shadow:0 1px 2px rgba(0,0,0,0.6);
+        }
+        .bt-switch[data-val="да"] .bt-sw-thumb { transform:translateX(12px); background:#ffffff; }
+
+        .bt-switch[data-val="да"][data-mode="gold"] { background:rgba(229,193,88,0.12); border-color:rgba(229,193,88,0.5); color:#f3d26b; }
+        .bt-switch[data-val="да"][data-mode="gold"] .bt-sw-track { background:#c69a31; border-color:#e5c158; }
+
+        .bt-switch[data-val="да"][data-mode="check"] { background:rgba(16,185,129,0.13); border-color:rgba(16,185,129,0.5); color:#34d399; }
+        .bt-switch[data-val="да"][data-mode="check"] .bt-sw-track { background:#059669; border-color:#10b981; }
+        .bt-switch[data-val="нет"][data-mode="check"] { background:rgba(242,54,69,0.12); border-color:rgba(242,54,69,0.45); color:#f87171; }
+        .bt-switch[data-val="нет"][data-mode="check"] .bt-sw-track { background:#3a181e; border-color:#f23645; }
+        .bt-switch[data-val="нет"][data-mode="check"] .bt-sw-thumb { background:#f87171; }
+
+        .bt-switch[data-val="да"][data-mode="danger"] { background:rgba(242,54,69,0.14); border-color:rgba(242,54,69,0.55); color:#f87171; }
+        .bt-switch[data-val="да"][data-mode="danger"] .bt-sw-track { background:#dc2626; border-color:#f87171; }
+
+        .bt-flow-pill { width:100%; height:28px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; display:flex; justify-content:space-between; align-items:center; padding:0 7px; box-sizing:border-box; transition:0.12s ease; border:1px solid #282830; background:#16161b; color:#d4d4d8; }
+        .bt-flow-pill:hover { filter:brightness(1.12); }
         .bt-flow-pill[data-dir="вверх"] { background:rgba(16, 185, 129, 0.14); color:#34d399; border-color:rgba(16, 185, 129, 0.45); }
         .bt-flow-pill[data-dir="вниз"] { background:rgba(242, 54, 69, 0.14); color:#f87171; border-color:rgba(242, 54, 69, 0.45); }
-        .bt-flow-pill[data-dir="—"] { background:#16161b; color:#71717a; border-color:#282830; }
+        .bt-flow-pill[data-dir="—"] { background:#14141a; color:#9ca3af; border-color:#282834; }
 
-        .bt-prof-btn { background:transparent; color:#8a8a93; border:1px solid transparent; border-radius:4px; padding:4px 4px; font-size:10.5px; font-weight:600; cursor:pointer; transition:0.12s; white-space:nowrap; }
-        .bt-prof-btn:hover { color:#d4d4d8; }
-        .bt-prof-btn.active { background:rgba(229, 193, 88, 0.18); color:#f7d97e; border-color:rgba(229, 193, 88, 0.55); }
+        .bt-prof-btn { background:transparent; color:#9ca3af; border:1px solid transparent; border-radius:4px; padding:4px 4px; font-size:10.5px; font-weight:600; cursor:pointer; transition:0.12s; white-space:nowrap; }
+        .bt-prof-btn:hover { color:#f4f4f5; }
+        .bt-prof-btn.active { background:#242014; color:#f3d26b; border-color:rgba(229, 193, 88, 0.55); box-shadow:0 1px 4px rgba(0,0,0,0.5); }
 
-        .bt-struct-preset { background:#18181e; color:#a1a1aa; border:1px solid #282832; border-radius:4px; padding:2px 5px; font-size:9.5px; cursor:pointer; transition:0.12s; white-space:nowrap; }
-        .bt-struct-preset:hover { color:#f3d26b; border-color:#e5c158; }
+        .bt-struct-preset { background:#15151b; color:#9ca3af; border:1px solid #282834; border-radius:4px; padding:1.5px 5px; font-size:9.5px; cursor:pointer; transition:0.12s; white-space:nowrap; }
+        .bt-struct-preset:hover { color:#f3d26b; border-color:#52525b; }
+        .bt-struct-preset.active { background:rgba(229,193,88,0.16); color:#f3d26b; border-color:rgba(229,193,88,0.55); font-weight:600; }
 
-        .bt-sel { width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:5px; font-size:11px; font-weight:500; outline:none; margin-bottom:6px; cursor:pointer; }
+        .bt-sel { width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:6px; font-size:11px; font-weight:500; outline:none; margin-bottom:6px; cursor:pointer; }
         .bt-sel:focus, #bt-inp-comment:focus, #f-swept-lvl:focus { border-color:#e5c158; }
         .bt-mini-pill { background:#1c1c22; color:#d4d4d8; border:1px solid #2e2e38; padding:3px 8px; font-size:10.5px; border-radius:4px; cursor:pointer; transition:0.12s; }
-        .bt-mini-pill.active { background:rgba(229, 193, 88, 0.2); color:#f7d97e; border-color:#e5c158; font-weight:700; }
+        .bt-mini-pill.active { background:rgba(229, 193, 88, 0.2); color:#f3d26b; border-color:#e5c158; font-weight:700; }
         .bt-top-btn { background:#16161a; color:#d4d4d8; border:1px solid #2a2a32; border-radius:5px; padding:2px 7px; font-size:11.5px; cursor:pointer; transition:0.12s; }
         .bt-top-btn:hover, .bt-top-btn.active { color:#f3d26b; border-color:#e5c158; background:rgba(229,193,88,0.14); }
         .bt-icon-btn { background:transparent; color:#d4d4d8; border:none; cursor:pointer; font-size:10.5px; padding:2px 5px; }
@@ -1174,9 +1263,11 @@
         .bt-drag-pill { background:#1a1a20; color:#f4f4f5; border:1px solid #383844; border-radius:5px; padding:3px 7px; font-size:10.5px; cursor:grab; display:inline-flex; align-items:center; gap:5px; transition:transform 0.1s ease, border-color 0.1s ease; }
         .bt-drag-pill.dragging-active { background:#2a2515; border-color:#f3d26b; color:#f3d26b; transform:scale(1.05); z-index:10; cursor:grabbing; box-shadow:0 4px 12px rgba(0,0,0,0.6); }
         .bt-del-col { color:#f23645; font-weight:bold; cursor:pointer; padding:0 2px; font-size:11px; }
-		.bt-cm-item:hover, .bt-cc-item:hover { background:rgba(229,193,88,0.18); color:#f3d26b !important; }
+        .bt-cm-item:hover, .bt-cc-item:hover, .bt-fix-action:hover { background:rgba(229,193,88,0.18) !important; border-color:#e5c158 !important; color:#f3d26b !important; }
         #bt-cc-btn:hover { border-color:#52525b; }
         #bt-quick-copy-prices:hover { border-color:rgba(229,193,88,0.55); }
+        .bt-prev-cell { background:#16161c; border:1px solid #262630; border-radius:4px; padding:2px 6px; flex-shrink:0; display:flex; flex-direction:column; min-width:48px; max-width:130px; }
+        .bt-prev-cell.is-first { border-color:rgba(229,193,88,0.55); background:rgba(229,193,88,0.08); }
     </style>
     `;
 
@@ -1196,14 +1287,23 @@
     const sessionPillBtn = document.getElementById('bt-session-pill');
     const commentInpEl = document.getElementById('bt-inp-comment');
     const commentMenuEl = document.getElementById('bt-comment-menu');
+    const rowPreviewEl = document.getElementById('bt-row-preview');
+    const fixHelpBoxEl = document.getElementById('bt-fix-help-box');
     let toastTimer = null;
+
+    rowPreviewEl.addEventListener('wheel', e => {
+        if (e.deltaY !== 0) {
+            e.preventDefault();
+            rowPreviewEl.scrollLeft += e.deltaY * 0.8;
+        }
+    }, { passive: false });
 
     function showToast(msg, type = 'success') {
         toastEl.innerText = msg;
         toastEl.style.borderLeftColor = type === 'error' ? '#f23645' : '#089981';
         toastEl.style.display = 'block';
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 3000);
+        toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 3200);
     }
 
     function pulseTradeCard(color = '#e5c158') {
@@ -1230,24 +1330,32 @@
             const centeredClass = o.kbd ? '' : 'bt-chip-centered';
             let styleVars = '';
             if (o.tone === 'green') {
-                styleVars = `style="--ac-bg:rgba(16,185,129,0.18); --ac-fg:#34d399; --ac-bd:#10b981;"`;
+                styleVars = `style="--ac-bg:#102620; --ac-fg:#34d399; --ac-bd:rgba(16,185,129,0.58);"`;
             } else if (o.tone === 'red') {
-                styleVars = `style="--ac-bg:rgba(242,54,69,0.2); --ac-fg:#f87171; --ac-bd:#f23645;"`;
+                styleVars = `style="--ac-bg:#2a1418; --ac-fg:#f87171; --ac-bd:rgba(242,54,69,0.58);"`;
             }
             const isAct = val === activeVal ? 'active' : '';
             return `<button type="button" class="bt-chip ${centeredClass} ${isAct}" data-val="${val}" ${styleVars}><span>${label}</span>${kbd}</button>`;
         }).join('');
-        return `<div class="bt-group bt-grid-${cols}" id="${id}">${htmlOpts}</div>`;
+        return `<div class="bt-group bt-seg-track bt-grid-${cols}" id="${id}">${htmlOpts}</div>`;
     }
 
-	const CANDLE_COLORS = {
-        'Лонг 3': { hex: '#72f238', hint: 'салатовая' },
-        'Лонг 2': { hex: '#4bb8d4', hint: 'голубая' },
-        'Лонг 1': { hex: '#3b7dff', hint: 'синяя' },
-        'Шорт 3': { hex: '#f7e84b', hint: 'жёлтая' },
-        'Шорт 2': { hex: '#eb3b4b', hint: 'красная' },
-        'Шорт 1': { hex: '#8a2bbd', hint: 'фиолетовая' }
-    };
+    function makeSwitch(id, activeVal = 'да', mode = 'gold', mb = '6px') {
+        const isYes = activeVal === 'да';
+        return `
+            <button type="button" class="bt-switch" id="${id}" data-val="${activeVal}" data-mode="${mode}" style="margin-bottom:${mb};">
+                <span class="bt-sw-txt">${isYes ? 'Да' : 'Нет'}</span>
+                <span class="bt-sw-track"><span class="bt-sw-thumb"></span></span>
+            </button>
+        `;
+    }
+
+    function updateSwitchUI(el, nextVal) {
+        if (!el) return;
+        el.dataset.val = nextVal;
+        const txt = el.querySelector('.bt-sw-txt');
+        if (txt) txt.innerText = nextVal === 'да' ? 'Да' : 'Нет';
+    }
 
     function makeCandleColorSelect(activeVal) {
         const info = CANDLE_COLORS[activeVal] || CANDLE_COLORS['Лонг 3'];
@@ -1257,20 +1365,20 @@
                     <span style="width:13px; height:13px; border-radius:3px; background:${v.hex}; display:inline-block; box-shadow:0 0 0 1px rgba(255,255,255,0.2);"></span>
                     <span style="font-weight:600;">${k}</span>
                 </div>
-                <span style="color:#8a8a93; font-size:10px;">${v.hint}</span>
+                <span style="color:#9ca3af; font-size:10px;">${v.hint}</span>
             </div>
         `).join('');
 
         return `
             <div id="bt-cc-wrap" style="position:relative; margin-bottom:6px;">
                 <input type="hidden" id="f-candle-col" value="${activeVal}">
-                <button type="button" id="bt-cc-btn" style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 7px; border-radius:5px; font-size:11px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:space-between; outline:none; transition:0.12s;">
+                <button type="button" id="bt-cc-btn" style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 7px; border-radius:6px; font-size:11px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:space-between; outline:none; transition:0.12s;">
                     <span style="display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden;">
                         <span id="bt-cc-dot" style="width:12px; height:12px; border-radius:3px; background:${info.hex}; flex-shrink:0; box-shadow:0 0 0 1px rgba(255,255,255,0.22);"></span>
                         <span id="bt-cc-label" style="font-weight:600;">${activeVal}</span>
-                        <span id="bt-cc-hint" style="color:#8a8a93; font-size:10px;">${info.hint}</span>
+                        <span id="bt-cc-hint" style="color:#9ca3af; font-size:10px;">${info.hint}</span>
                     </span>
-                    <span style="color:#8a8a93; font-size:10px;">▾</span>
+                    <span style="color:#9ca3af; font-size:10px;">▾</span>
                 </button>
                 <div id="bt-cc-menu" style="display:none; position:absolute; top:31px; left:0; width:100%; background:#18181e; border:1px solid #3d3522; border-radius:6px; box-shadow:0 10px 25px rgba(0,0,0,0.92); z-index:120; padding:3px; box-sizing:border-box;">
                     ${itemsHtml}
@@ -1302,18 +1410,25 @@
     }
 
     function getChipVal(id, fallback = '') {
-        return document.querySelector(`#${id} .active`)?.dataset.val || fallback;
+        const el = document.getElementById(id);
+        if (!el) return fallback;
+        if (el.classList.contains('bt-switch')) return el.dataset.val || fallback;
+        return el.querySelector('.active')?.dataset.val || fallback;
     }
 
     function setChipVal(id, val) {
-        const grp = document.getElementById(id);
-        if (!grp) return;
-        grp.querySelectorAll('.bt-chip').forEach(b => b.classList.toggle('active', b.dataset.val === val));
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.classList.contains('bt-switch')) {
+            updateSwitchUI(el, val);
+            return;
+        }
+        el.querySelectorAll('.bt-chip').forEach(b => b.classList.toggle('active', b.dataset.val === val));
     }
 
     function makeFlowPill(id, tfLabel, dirVal) {
         const arrowText = dirVal === 'вверх' ? '↑ вверх' : (dirVal === 'вниз' ? '↓ вниз' : '—');
-        return `<button type="button" class="bt-flow-pill" id="${id}" data-tf="${tfLabel}" data-dir="${dirVal}" title="Кликните, чтобы переключить направление потока ${tfLabel}">
+        return `<button type="button" class="bt-flow-pill" id="${id}" data-tf="${tfLabel}" data-dir="${dirVal}" title="Нажмите, чтобы изменить направление потока ${tfLabel}">
             <span style="color:#9ca3af; font-weight:500;">${tfLabel}</span>
             <span class="bt-flow-val">${arrowText}</span>
         </button>`;
@@ -1323,39 +1438,26 @@
         return document.getElementById(id)?.dataset.dir || fallback;
     }
 
+    function syncPresetHighlights() {
+        const stVal = document.getElementById('f-struct')?.value;
+        dynFieldsEl.querySelectorAll('.bt-struct-preset').forEach(b => {
+            b.classList.toggle('active', b.dataset.st === stVal);
+        });
+    }
+
     function updateScreenshotPillUI() {
         if (screenshotUrl) {
             screenPillBtn.innerText = '📸 Скрин ✓';
             screenPillBtn.style.background = 'rgba(16, 185, 129, 0.18)';
             screenPillBtn.style.color = '#34d399';
             screenPillBtn.style.borderColor = '#10b981';
-            screenPillBtn.title = `Прикреплен: ${screenshotUrl} (Кликните, чтобы очистить)`;
+            screenPillBtn.title = `Прикреплён: ${screenshotUrl} (нажмите, чтобы удалить)`;
         } else {
             screenPillBtn.innerText = '📸 Скрин';
             screenPillBtn.style.background = '#16161a';
             screenPillBtn.style.color = '#d4d4d8';
             screenPillBtn.style.borderColor = '#2a2a32';
-            screenPillBtn.title = 'Нажмите Alt+S в TradingView, затем Ctrl+V в окне';
-        }
-    }
-
-    function sync30TradesChecklist() {
-        const chkGrp = document.getElementById('f-check30');
-        if (!chkGrp) return;
-
-        const fuel = getChipVal('f-fuel30', 'да');
-        const touch = getChipVal('f-touch30', '1');
-        const against = getChipVal('f-against30', 'нет');
-        const swept = document.getElementById('f-swept')?.value || 'приманка';
-
-        if (swept === 'ничего не снято') {
-            setChipVal('f-check30', 'нет');
-            const lvlInp = document.getElementById('f-swept-lvl');
-            if (lvlInp) lvlInp.value = '';
-        } else if (against === 'да' || touch !== '1' || fuel === 'нет') {
-            setChipVal('f-check30', 'нет');
-        } else {
-            setChipVal('f-check30', 'да');
+            screenPillBtn.title = 'Сделайте снимок графика (Alt+S) и нажмите Ctrl+V в этом окне';
         }
     }
 
@@ -1394,6 +1496,347 @@
         }
         errSel.value = '—';
         if (errHint) errHint.innerText = '';
+    }
+
+    function recalculateQueueTotals(queue) {
+        let runningCum = 0;
+        let runningMax = 0;
+        for (const snap of queue) {
+            if (!snap || typeof snap !== 'object') continue;
+            snap.cumRBefore = runningCum;
+            if (typeof snap.rOut === 'number' && !isNaN(snap.rOut)) {
+                runningCum = Number((runningCum + snap.rOut).toFixed(2));
+            }
+            if (runningCum > runningMax) runningMax = runningCum;
+            snap.newCum = runningCum;
+            snap.newMax = runningMax;
+            snap.dd = Number(Math.max(0, runningMax - runningCum).toFixed(2));
+        }
+        return { cumR: runningCum, maxCumR: runningMax };
+    }
+
+    function collectCurrentSnapshot() {
+        if (!currentTrade) return null;
+        const cols = getActiveColumns();
+        const t = currentTrade;
+        const isLong = t.direction === 'LONG';
+        const hasRes30 = cols.includes('res_30');
+
+        const resStd = getChipVal('f-res', t.autoResult);
+        const res30Val = getChipVal('f-res30', t.autoResult === 'Тейк' ? 'цель' : (t.autoResult === 'Стоп' ? 'стоп' : 'безубыток'));
+        const activeResult = hasRes30 ? res30Val : resStd;
+
+        const bucket = getTplBucket();
+        const existingSnap = bucket.batchQueue.find(item => item.tradeId === t.id || item.signature === t.signature);
+        const baseCumR = existingSnap ? (existingSnap.cumRBefore ?? 0) : bucket.cumR;
+
+        const manualRStr = cleanText(document.getElementById('f-manual-r30')?.value || '');
+        const manualRNum = manualRStr ? parseFloat(manualRStr.replace(',', '.')) : NaN;
+
+        let rOut = '';
+        let newCum = baseCumR;
+        let newMax = bucket.maxCumR;
+
+        if (activeResult === 'Тейк' || activeResult === 'цель') {
+            rOut = t.riskReward;
+            newCum = Number((baseCumR + rOut).toFixed(2));
+        } else if (activeResult === 'Стоп' || activeResult === 'стоп') {
+            rOut = -1;
+            newCum = Number((baseCumR - 1).toFixed(2));
+        } else if (activeResult === 'Безубыток' || activeResult === 'безубыток') {
+            rOut = 0;
+        } else if (!isNaN(manualRNum)) {
+            rOut = manualRNum;
+            newCum = Number((baseCumR + rOut).toFixed(2));
+        }
+
+        if (newCum > newMax) newMax = newCum;
+        const dd = Number(Math.max(0, newMax - newCum).toFixed(2));
+
+        const aoiInp = document.getElementById('f-aoi-num');
+        const aoiNum = aoiInp ? (parseInt(aoiInp.value, 10) || 1) : state.aoiNum;
+
+        const flD = getFlowVal('f-fl-d', state.flowD);
+        const fl4H = getFlowVal('f-fl-4h', state.flow4H);
+        const fl1H = getFlowVal('f-fl-1h', state.flow1H);
+        const fl15M = getFlowVal('f-fl-15m', state.flow15M);
+
+        const f1 = getChipVal('f-f1', 'да'), f2 = getChipVal('f-f2', 'да'), f3 = getChipVal('f-f3', 'нет'), f4 = getChipVal('f-f4', 'да');
+        const factorsCnt = [f1, f2, f3, f4].filter(x => x === 'да').length;
+
+        const stopUsd = Math.max(0.01, t.riskPts);
+        const lots30 = Math.floor((30 / stopUsd / 100) * 100) / 100;
+        const profitUsd = rOut === '' ? '' : Number((Number(rOut) * lots30 * 100 * stopUsd).toFixed(2));
+        const lotsOff = Number(((10000 * 0.003) / (stopUsd / 0.01 * 1)).toFixed(2));
+        const rOutOff = resStd === 'Стоп' ? -1 : (resStd === 'Тейк' ? Number((0.5 * 3 + 0.5 * t.riskReward).toFixed(2)) : 0);
+
+        const comment = cleanText(commentInpEl?.value || '');
+        const chk30 = getChipVal('f-check30', 'да');
+        const img = cleanText(screenshotUrl);
+        const sweptVal = document.getElementById('f-swept')?.value || 'приманка';
+        const sweptLvlRaw = cleanText(document.getElementById('f-swept-lvl')?.value || '').replace(',', '.');
+
+        return {
+            tradeId: t.id,
+            signature: t.signature,
+            symbol: t.symbol,
+            candleDate: t.candleDate,
+            mskTime: t.mskTime,
+            officeTimeSlot: t.officeTimeSlot,
+            session: getActiveSession(),
+            isLong,
+            timeframeCyr: t.timeframeCyr,
+            timeframeLat: t.timeframeLat,
+            trend: getChipVal('f-trend', isLong ? 'Тренд вверх' : 'Тренд вниз'),
+            trend_h4: getChipVal('f-h4-trend', isLong ? 'Вверх' : 'Вниз'),
+            zone: getChipVal('f-zone', state.zone),
+            zone_30: document.getElementById('f-zone30')?.value || 'Разворотная зона',
+            poi_type: getChipVal('f-poi-type', 'OB'),
+            form_m1: getChipVal('f-form-m1', 'SCOB'),
+            liq: getChipVal('f-liq', state.liq),
+            react: getChipVal('f-react', 'да'),
+            conf: document.getElementById('f-conf')?.value || state.conf,
+            entryPrice: t.entryPrice,
+            stopPrice: t.stopPrice,
+            targetPrice: t.targetPrice,
+            upperBound: t.upperBound,
+            lowerBound: t.lowerBound,
+            riskPts: t.riskPts,
+            potPts: t.potPts,
+            riskReward: t.riskReward,
+            lots30,
+            lotsOff,
+            resStd,
+            res30Val,
+            activeResult,
+            manualRNum,
+            rOut,
+            rOutOff,
+            profitUsd,
+            cumRBefore: baseCumR,
+            newCum,
+            newMax,
+            dd,
+            hit_1r: getChipVal('f-hit1r', t.reached1R ? 'да' : 'нет'),
+            hit_3r: getChipVal('f-hit3r', t.reached3R ? 'да' : 'нет'),
+            errVal: document.getElementById('f-err')?.value || '—',
+            comment,
+            img,
+            aoiNum,
+            flD, fl4H, fl1H, fl15M,
+            struct_30: document.getElementById('f-struct')?.value || (isLong ? 'слом ↑' : 'слом ↓'),
+            sweptVal,
+            sweptLvlRaw,
+            candle_col: document.getElementById('f-candle-col')?.value || (isLong ? 'Лонг 3' : 'Шорт 3'),
+            against_flow: getChipVal('f-against30', 'нет'),
+            fuel_30: getChipVal('f-fuel30', 'да'),
+            touch_30: getChipVal('f-touch30', '1'),
+            chk30,
+            f1, f2, f3, f4,
+            factorsCnt,
+            reached: getChipVal('f-reached', 'да'),
+            aoi_res: getChipVal('f-aoi-res', 'Отбой')
+        };
+    }
+
+    function renderSnapshotToRow(snap) {
+        const cols = getActiveColumns();
+        const pasteCol = getActivePasteCol();
+        const startRow = getActiveStartRow();
+        const schemaStyle = PRESET_SCHEMAS[state.presetKey] || PRESET_SCHEMAS.bt_main;
+        const f = (tok, fallback) => buildDynamicFormula(tok, cols, pasteCol, startRow, fallback);
+
+        const sweptLvlFormatted = (snap.sweptVal === 'ничего не снято' || !snap.sweptLvlRaw) ? '' : numStr(snap.sweptLvlRaw);
+
+        const tokenValues = {
+            symbol: snap.symbol,
+            date: snap.candleDate,
+            time_msk: snap.mskTime,
+            time_slot: snap.officeTimeSlot,
+            session: snap.session,
+            trend: snap.trend,
+            trend_h4: snap.trend_h4,
+            tf: schemaStyle.tfStyle === 'cyr' ? snap.timeframeCyr : snap.timeframeLat,
+            dir_lower: snap.isLong ? 'лонг' : 'шорт',
+            dir_title: snap.isLong ? 'Лонг' : 'Шорт',
+            zone: snap.zone,
+            zone_30: snap.zone_30,
+            poi_type: snap.poi_type,
+            form_m1: snap.form_m1,
+            liq: snap.liq,
+            react: snap.react,
+            conf: snap.conf,
+            entry: numStr(snap.entryPrice),
+            stop: numStr(snap.stopPrice),
+            target: numStr(snap.targetPrice),
+            upper_bound: numStr(snap.upperBound),
+            lower_bound: numStr(snap.lowerBound),
+            risk_pts: f('risk_pts', numStr(snap.riskPts)),
+            pot_pts: f('pot_pts', numStr(snap.potPts)),
+            rr: f('rr', numStr(snap.riskReward)),
+            lots_30: f('lots_30', numStr(snap.lots30)),
+            lots_off: f('lots_off', numStr(snap.lotsOff)),
+            result: snap.resStd,
+            res_30: snap.res30Val,
+            manual_r_30: (snap.res30Val === 'частичная фиксация' || snap.res30Val === 'закрыл руками') && !isNaN(snap.manualRNum) ? numStr(snap.manualRNum) : '',
+            res_off: snap.resStd === 'Безубыток' ? 'Сейф/БУ' : snap.resStd,
+            r_out: f('r_out', snap.rOut === '' ? '' : numStr(snap.rOut)),
+            r_out_off: f('r_out_off', numStr(snap.rOutOff)),
+            profit_usd: f('profit_usd', snap.profitUsd === '' ? '' : numStr(snap.profitUsd)),
+            prof_pct_off: f('prof_pct_off', numStr(Number((snap.rOutOff * 0.003).toFixed(4)))),
+            move_pts: f('move_pts', numStr(snap.resStd === 'Тейк' ? snap.potPts : (snap.resStd === 'Стоп' ? -snap.riskPts : 0))),
+            cum_r: f('cum_r', snap.resStd === 'Пропуск' ? numStr(snap.cumRBefore) : numStr(snap.newCum)),
+            dd_r: f('dd_r', snap.resStd === 'Пропуск' ? numStr(0) : numStr(snap.dd)),
+            hit_1r: snap.hit_1r,
+            hit_3r: snap.hit_3r,
+            error: snap.errVal,
+            error_poi: snap.errVal,
+            comment: snap.comment,
+            comment_30: snap.comment,
+            screenshot: snap.img,
+            aoi_num: snap.aoiNum,
+            flow_d: snap.flD,
+            flow_4h: snap.fl4H,
+            flow_1h: snap.fl1H,
+            flow_15m: snap.fl15M,
+            struct_30: snap.struct_30,
+            swept_30: snap.sweptVal,
+            swept_level_30: sweptLvlFormatted,
+            candle_col: snap.candle_col,
+            against_flow: snap.against_flow,
+            fuel_30: snap.fuel_30,
+            touch_30: snap.touch_30,
+            check_30: snap.chk30,
+            tf_ok: 'да',
+            emotion: 'Спокоен',
+            safe_pct: numStr(0.5),
+            safe_rr: numStr(3),
+            risk_pct_col: numStr(0.003),
+            f_ret: snap.f1,
+            f_ob: snap.f2,
+            f_fvg: snap.f3,
+            f_liq: snap.f4,
+            factors_cnt: f('factors_cnt', snap.factorsCnt),
+            valid_aoi: f('valid_aoi', snap.factorsCnt >= 2 ? 'ДА' : 'нет'),
+            reached: snap.reached,
+            aoi_res: snap.aoi_res,
+            empty: ''
+        };
+
+        const baseIdx = colLetterToIndex(pasteCol);
+        const cells = cols.map((tok, i) => {
+            const val = String(tokenValues[tok] ?? '');
+            return {
+                colLet: colIndexToLetter(baseIdx + i),
+                tok,
+                shortLabel: SHORT_COL_NAMES[tok] || tok,
+                val
+            };
+        });
+
+        return {
+            pasteCol,
+            cells,
+            tsv: cells.map(c => c.val).join('\t')
+        };
+    }
+
+    function updatePreviewBar() {
+        if (!rowPreviewEl || !currentTrade) return;
+        const snap = collectCurrentSnapshot();
+        if (!snap) return;
+        const rendered = renderSnapshotToRow(snap);
+        const firstCell = rendered.cells[0];
+
+        const hintEl = document.getElementById('bt-preview-hint');
+        if (hintEl && firstCell) {
+            hintEl.innerHTML = `СТРОКА ДЛЯ ВСТАВКИ (НАЧАТЬ СО СТОЛБЦА <span style="color:#f3d26b;">${firstCell.colLet} · ${firstCell.shortLabel}</span>):`;
+        }
+        const fixColLbl = document.getElementById('bt-fix-col-lbl');
+        if (fixColLbl && firstCell) fixColLbl.innerText = `${firstCell.colLet} (${firstCell.shortLabel})`;
+
+        rowPreviewEl.innerHTML = rendered.cells.map((c, idx) => {
+            const isFormula = c.val.startsWith('=');
+            const displayVal = isFormula ? 'fx Формула' : (c.val || '—');
+            const valColor = isFormula ? '#60a5fa' : (c.val ? '#f4f4f5' : '#52525b');
+            const safeTitle = c.val.replace(/"/g, '&quot;');
+            return `
+                <div class="bt-prev-cell ${idx === 0 ? 'is-first' : ''}" title="Столбец ${c.colLet} (${TOKEN_LABELS[c.tok] || c.tok}): ${safeTitle}">
+                    <span style="font-size:8.5px; color:#9ca3af; white-space:nowrap;"><b style="color:#e5c158;">${c.colLet}</b> · ${c.shortLabel}</span>
+                    <span style="font-size:10px; font-weight:600; color:${valColor}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${displayVal}</span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function restoreSavedTradeState() {
+        if (!currentTrade) return;
+        const bucket = getTplBucket();
+        const saved = bucket.batchQueue.find(item => item.tradeId === currentTrade.id || item.signature === currentTrade.signature);
+        if (!saved) return;
+
+        screenshotUrl = saved.img || '';
+        manualSessionOverride = saved.session || null;
+        if (commentInpEl) commentInpEl.value = saved.comment || '';
+
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el && val != null) el.value = val;
+        };
+
+        setVal('f-aoi-num', saved.aoiNum);
+        setVal('f-struct', saved.struct_30);
+        setVal('f-zone30', saved.zone_30);
+        setVal('f-swept', saved.sweptVal);
+        setVal('f-conf', saved.conf);
+        setVal('f-err', saved.errVal);
+
+        if (saved.candle_col) setCandleColVal(saved.candle_col);
+
+        const setFlow = (id, dir) => {
+            const p = document.getElementById(id);
+            if (!p || !dir) return;
+            p.dataset.dir = dir;
+            const v = p.querySelector('.bt-flow-val');
+            if (v) v.innerText = dir === 'вверх' ? '↑ вверх' : (dir === 'вниз' ? '↓ вниз' : '—');
+        };
+        setFlow('f-fl-d', saved.flD);
+        setFlow('f-fl-4h', saved.fl4H);
+        setFlow('f-fl-1h', saved.fl1H);
+        setFlow('f-fl-15m', saved.fl15M);
+
+        if (saved.trend) setChipVal('f-trend', saved.trend);
+        if (saved.trend_h4) setChipVal('f-h4-trend', saved.trend_h4);
+        if (saved.zone) setChipVal('f-zone', saved.zone);
+        if (saved.poi_type) setChipVal('f-poi-type', saved.poi_type);
+        if (saved.form_m1) setChipVal('f-form-m1', saved.form_m1);
+        if (saved.fuel_30) setChipVal('f-fuel30', saved.fuel_30);
+        if (saved.touch_30) setChipVal('f-touch30', saved.touch_30);
+        if (saved.against_flow) setChipVal('f-against30', saved.against_flow);
+        if (saved.chk30) setChipVal('f-check30', saved.chk30);
+        if (saved.liq) setChipVal('f-liq', saved.liq);
+        if (saved.react) setChipVal('f-react', saved.react);
+        if (saved.f1) setChipVal('f-f1', saved.f1);
+        if (saved.f2) setChipVal('f-f2', saved.f2);
+        if (saved.f3) setChipVal('f-f3', saved.f3);
+        if (saved.f4) setChipVal('f-f4', saved.f4);
+        if (saved.reached) setChipVal('f-reached', saved.reached);
+        if (saved.aoi_res) setChipVal('f-aoi-res', saved.aoi_res);
+
+        if (saved.signature === currentTrade.signature) {
+            setVal('f-swept-lvl', saved.sweptVal === 'ничего не снято' ? '' : numStr(saved.sweptLvlRaw));
+            if (saved.hit_1r) setChipVal('f-hit1r', saved.hit_1r);
+            if (saved.hit_3r) setChipVal('f-hit3r', saved.hit_3r);
+            if (saved.resStd) setChipVal('f-res', saved.resStd);
+            if (saved.res30Val) {
+                setChipVal('f-res30', saved.res30Val);
+                const manWrap = document.getElementById('bt-manual-r-wrap');
+                if (manWrap) {
+                    manWrap.style.display = (saved.res30Val === 'частичная фиксация' || saved.res30Val === 'закрыл руками') ? 'flex' : 'none';
+                }
+                if (!isNaN(saved.manualRNum)) setVal('f-manual-r30', numStr(saved.manualRNum));
+            }
+        }
     }
 
     function renderMainFields() {
@@ -1435,20 +1878,20 @@
             const h4Def = ind.flows?.h4 ? (ind.flows.h4 === 'вверх' ? 'Вверх' : 'Вниз') : (isLong ? 'Вверх' : 'Вниз');
             html += `<div class="bt-lbl">ТРЕНД H4 ${BOLT} И ФАКТОРЫ ОБЛАСТИ</div>` +
                 makeChips('f-h4-trend', ['Вверх', 'Вниз'], h4Def, 2) +
-                `<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:6px;">
-                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Откат</div>${makeChips('f-f1', ['да', 'нет'], 'да', 1)}</div>
-                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">OB H4</div>${makeChips('f-f2', ['да', 'нет'], 'да', 1)}</div>
-                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Имб.</div>${makeChips('f-f3', ['да', 'нет'], 'нет', 1)}</div>
-                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Ликв.</div>${makeChips('f-f4', ['да', 'нет'], 'да', 1)}</div>
+                `<div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:2px;">
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Откат</div>${makeSwitch('f-f1', 'да', 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">OB H4</div>${makeSwitch('f-f2', 'да', 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Имб.</div>${makeSwitch('f-f3', 'нет', 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">Ликв.</div>${makeSwitch('f-f4', 'да', 'gold')}</div>
                 </div>` +
                 `<div style="display:grid; grid-template-columns:1fr 2fr; gap:6px;">
-                    <div><div class="bt-lbl">ЦЕНА ДОШЛА</div>${makeChips('f-reached', [{val:'да', label:'Да'}, {val:'нет', label:'Нет'}], 'да', 2)}</div>
+                    <div><div class="bt-lbl">ЦЕНА ДОШЛА</div>${makeSwitch('f-reached', 'да', 'gold')}</div>
                     <div><div class="bt-lbl">РЕЗУЛЬТАТ ОБЛАСТИ</div>${makeChips('f-aoi-res', ['Отбой', 'Пробита', 'Ждёт'], 'Отбой', 3)}</div>
                 </div>`;
         }
 
         if (has('zone')) {
-            html += `<div class="bt-lbl">ЗОНА ИНТЕРЕСА</div>` +
+            html += `<div class="bt-lbl">ЗОНА ВХОДА</div>` +
                 makeChips('f-zone', [
                     { val: 'Ордер-блок', label: 'Ордер-блок', kbd: '1' },
                     { val: 'Имбаланс', label: 'Имбаланс', kbd: '2' },
@@ -1486,16 +1929,15 @@
 
         if (hasAnyFlowOr30) {
             const defCandleCol = ind.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3');
-            const defStruct = ind.detectedStructure || (isLong ? 'пробой ↓ · пробой ↓ · слом ↑' : 'пробой ↑ · пробой ↑ · слом ↓');
-
             const stSlom = isLong ? 'слом ↑' : 'слом ↓';
             const st2Prob = isLong ? 'пробой ↓ · пробой ↓ · слом ↑' : 'пробой ↑ · пробой ↑ · слом ↓';
             const stFake = isLong ? 'ложный пробой ↓ · слом ↑' : 'ложный пробой ↑ · слом ↓';
             const stCont = isLong ? 'пробой ↑ · пробой ↑' : 'пробой ↓ · пробой ↓';
+            const defStruct = state.struct30 || st2Prob;
 
             html += `
                 <div class="bt-section-box">
-                    <div class="bt-lbl">1. ПОТОКИ В МОМЕНТ ВХОДА (КЛИК ДЛЯ СМЕНЫ) ${ind.flows ? BOLT : ''}</div>
+                    <div class="bt-lbl">ПОТОКИ В МОМЕНТ ВХОДА ${ind.flows ? BOLT : ''}</div>
                     <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:7px;">
                         ${makeFlowPill('f-fl-d', 'Д', state.flowD)}
                         ${makeFlowPill('f-fl-4h', '4Ч', state.flow4H)}
@@ -1503,9 +1945,9 @@
                         ${makeFlowPill('f-fl-15m', '15м', state.flow15M)}
                     </div>
 
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
-                        <div class="bt-lbl" style="margin:0;">СТРУКТУРА ПЕРЕД ВХОДОМ ${ind.detectedStructure ? BOLT : ''}</div>
-                        <div style="display:flex; gap:3px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
+                        <div class="bt-lbl" style="margin:0; flex-shrink:0;">СТРУКТУРА</div>
+                        <div style="display:flex; gap:3px; flex-wrap:nowrap;">
                             <button type="button" class="bt-struct-preset" data-st="${stSlom}">Слом</button>
                             <button type="button" class="bt-struct-preset" data-st="${st2Prob}">2 проб.+слом</button>
                             <button type="button" class="bt-struct-preset" data-st="${stFake}">Ложн. пробой</button>
@@ -1516,21 +1958,21 @@
                 </div>
 
                 <div class="bt-section-box">
-                    <div style="display:grid; grid-template-columns:1.1fr 0.9fr; gap:6px;">
+                    <div style="display:grid; grid-template-columns:1.05fr 0.95fr; gap:6px;">
                         <div>
-                            <div class="bt-lbl">2. ВИД ЗОНЫ (ДЕТАЛЬНЫЙ)</div>
+                            <div class="bt-lbl">ВИД ЗОНЫ</div>
                             ${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель', 'Средний покупатель', 'Красивый покупатель', 'Сильный продавец', 'Средний продавец', 'Красивый продавец', 'Зона входа', 'Проторговка', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], 'Разворотная зона')}
                         </div>
                         <div>
-							<div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>
+                            <div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>
                             ${makeCandleColorSelect(defCandleCol)}
                         </div>
                     </div>
 
-                    <div style="display:grid; grid-template-columns:1fr 1.25fr 1.1fr; gap:6px;">
+                    <div style="display:grid; grid-template-columns:0.95fr 1.25fr 0.95fr; gap:6px; align-items:start;">
                         <div>
                             <div class="bt-lbl">ТОПЛИВО</div>
-                            ${makeChips('f-fuel30', [{val:'да', label:'Да'}, {val:'нет', label:'Нет'}], 'да', 2)}
+                            ${makeSwitch('f-fuel30', 'да', 'gold')}
                         </div>
                         <div>
                             <div class="bt-lbl">КАСАНИЕ ЗОНЫ</div>
@@ -1538,7 +1980,7 @@
                         </div>
                         <div>
                             <div class="bt-lbl">ПРОТИВ ПОТОКА</div>
-                            ${makeChips('f-against30', [{val:'нет', label:'Нет'}, {val:'да', label:'Да', tone:'red'}], 'нет', 2)}
+                            ${makeSwitch('f-against30', 'нет', 'danger')}
                         </div>
                     </div>
 
@@ -1550,40 +1992,37 @@
                         <div>
                             <div class="bt-lbl">ЦЕНА УРОВНЯ СНЯТИЯ ${BOLT}</div>
                             <div style="display:flex; gap:3px; height:28px;">
-                                <input type="text" id="f-swept-lvl" value="${t.entryExtreme ? numStr(t.entryExtreme) : ''}" placeholder="Цена..." style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:5px; font-size:11px; outline:none;">
-                                <button type="button" id="bt-fill-swept-lvl" title="Подставить экстремум свечи входа (${t.entryExtreme})" style="height:28px; background:#18181d; color:#f3d26b; border:1px solid #282830; border-radius:5px; padding:0 6px; cursor:pointer; font-size:11px;">↺</button>
+                                <input type="text" id="f-swept-lvl" value="${t.entryExtreme !== '' ? numStr(t.entryExtreme) : ''}" placeholder="Цена уровня..." style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:6px; font-size:11px; outline:none;">
+                                <button type="button" id="bt-fill-swept-lvl" title="Вернуть цену минимума/максимума свечи входа (${t.entryExtreme})" style="height:28px; background:#18181d; color:#f3d26b; border:1px solid #282830; border-radius:6px; padding:0 6px; cursor:pointer; font-size:11px;">↺</button>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div style="display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:6px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                     <div>
-                        <div class="bt-lbl">ЧЕК-ЛИСТ 7/7 ${BOLT}</div>
-                        ${makeChips('f-check30', [{val:'да', label:'Да', tone:'green'}, {val:'нет', label:'Нет', tone:'red'}], 'да', 2)}
+                        <div class="bt-lbl">ЧЕК-ЛИСТ 7/7</div>
+                        ${makeSwitch('f-check30', 'да', 'check')}
                     </div>
                     <div>
                         <div class="bt-lbl">ДОШЛА ДО 1:1 ${BOLT}</div>
-                        ${makeChips('f-hit1r', [{val:'да', label:'Да'}, {val:'нет', label:'Нет'}], t.reached1R ? 'да' : 'нет', 2)}
+                        ${makeSwitch('f-hit1r', t.reached1R ? 'да' : 'нет', 'gold')}
                     </div>
                     <div>
                         <div class="bt-lbl">ДОШЛА ДО 1:3 ${BOLT}</div>
-                        ${makeChips('f-hit3r', [{val:'да', label:'Да'}, {val:'нет', label:'Нет'}], t.reached3R ? 'да' : 'нет', 2)}
+                        ${makeSwitch('f-hit3r', t.reached3R ? 'да' : 'нет', 'gold')}
                     </div>
                 </div>
             `;
         }
 
         if (has('liq') || has('conf') || has('react')) {
-            html += `<div style="display:grid; grid-template-columns:1.25fr 1.75fr; gap:7px;">`;
+            html += `<div style="display:grid; grid-template-columns:1.1fr 1.9fr; gap:7px;">`;
             if (has('liq')) {
-                html += `<div><div class="bt-lbl">СНЯТИЕ ЛИКВИДНОСТИ</div>${makeChips('f-liq', [
-                    { val: 'да', label: 'Да' },
-                    { val: 'нет', label: 'Нет' }
-                ], state.liq, 2)}</div>`;
+                html += `<div><div class="bt-lbl">СНЯТИЕ ЛИКВ. <span style="color:#9ca3af;">(Пробел)</span></div>${makeSwitch('f-liq', state.liq, 'gold')}</div>`;
             }
             if (has('conf')) {
-                html += `<div><div class="bt-lbl">ПОДТВЕРЖДЕНИЕ <span style="color:#71717a;">(Z–B)</span></div>${makeSelect('f-conf', [
+                html += `<div><div class="bt-lbl">ПОДТВЕРЖДЕНИЕ <span style="color:#9ca3af;">(Z–B)</span></div>${makeSelect('f-conf', [
                     { val: 'Слом структуры', label: 'Слом структуры [Z]' },
                     { val: 'Реакция от зоны', label: 'Реакция от зоны [X]' },
                     { val: 'Поглощение', label: 'Поглощение [C]' },
@@ -1591,10 +2030,7 @@
                     { val: 'Без подтверждения', label: 'Без подтверждения [B]' }
                 ], state.conf)}</div>`;
             } else if (has('react')) {
-                html += `<div><div class="bt-lbl">РЕАКЦИЯ ОТ ЗОНЫ</div>${makeChips('f-react', [
-                    { val: 'да', label: 'Да' },
-                    { val: 'нет', label: 'Нет' }
-                ], 'да', 2)}</div>`;
+                html += `<div><div class="bt-lbl">РЕАКЦИЯ ОТ ЗОНЫ</div>${makeSwitch('f-react', 'да', 'gold')}</div>`;
             }
             html += `</div>`;
         }
@@ -1602,7 +2038,7 @@
         if (has('res_30')) {
             const defRes30 = t.autoResult === 'Тейк' ? 'цель' : (t.autoResult === 'Стоп' ? 'стоп' : 'безубыток');
             html += `
-                <div class="bt-lbl">ИСХОД СДЕЛКИ ${BOLT} <span style="color:#71717a; font-weight:500;">(Q / W / E / R)</span></div>
+                <div class="bt-lbl">ИСХОД СДЕЛКИ ${BOLT} <span style="color:#9ca3af; font-weight:500;">(Q / W / E / R)</span></div>
                 ${makeChips('f-res30', [
                     { val: 'цель', label: 'Цель', kbd: 'Q', tone: 'green' },
                     { val: 'стоп', label: 'Стоп', kbd: 'W', tone: 'red' },
@@ -1660,10 +2096,39 @@
                 if (pill.id === 'f-fl-4h') saveState({ flow4H: next });
                 if (pill.id === 'f-fl-1h') saveState({ flow1H: next });
                 if (pill.id === 'f-fl-15m') saveState({ flow15M: next });
+                updatePreviewBar();
             };
         });
 
-		const ccBtn = document.getElementById('bt-cc-btn');
+        dynFieldsEl.querySelectorAll('.bt-switch').forEach(sw => {
+            sw.onclick = () => {
+                const next = sw.dataset.val === 'да' ? 'нет' : 'да';
+                updateSwitchUI(sw, next);
+                if (sw.id === 'f-liq') {
+                    saveState({ liq: next });
+                    if (next === 'нет' && getChipVal('f-res') === 'Пропуск') {
+                        const confEl = document.getElementById('f-conf');
+                        if (confEl) confEl.value = 'Без подтверждения';
+                    }
+                    autoSuggestError();
+                }
+                updatePreviewBar();
+            };
+        });
+
+        dynFieldsEl.querySelectorAll('.bt-struct-preset').forEach(btn => {
+            btn.onclick = () => {
+                const sel = document.getElementById('f-struct');
+                if (sel) {
+                    sel.value = btn.dataset.st;
+                    saveState({ struct30: sel.value });
+                }
+                syncPresetHighlights();
+                updatePreviewBar();
+            };
+        });
+
+        const ccBtn = document.getElementById('bt-cc-btn');
         const ccMenu = document.getElementById('bt-cc-menu');
         if (ccBtn && ccMenu) {
             ccBtn.onclick = e => {
@@ -1674,29 +2139,44 @@
                 item.onclick = () => {
                     setCandleColVal(item.dataset.val);
                     ccMenu.style.display = 'none';
+                    updatePreviewBar();
                 };
             });
         }
-
-        dynFieldsEl.querySelectorAll('.bt-struct-preset').forEach(btn => {
-            btn.onclick = () => {
-                const sel = document.getElementById('f-struct');
-                if (sel) sel.value = btn.dataset.st;
-            };
-        });
 
         const fillSweptBtn = document.getElementById('bt-fill-swept-lvl');
         if (fillSweptBtn) {
             fillSweptBtn.onclick = () => {
                 const inp = document.getElementById('f-swept-lvl');
-                if (inp && currentTrade?.entryExtreme) inp.value = numStr(currentTrade.entryExtreme);
+                if (inp && currentTrade?.entryExtreme !== '') {
+                    inp.value = numStr(currentTrade.entryExtreme);
+                    updatePreviewBar();
+                }
             };
         }
 
-        const sweptSel = document.getElementById('f-swept');
-        if (sweptSel) {
-            sweptSel.addEventListener('change', () => sync30TradesChecklist());
-        }
+        dynFieldsEl.querySelectorAll('select, input').forEach(el => {
+            el.addEventListener('change', () => {
+                if (el.id === 'f-swept') {
+                    const lvlInp = document.getElementById('f-swept-lvl');
+                    if (lvlInp) {
+                        lvlInp.value = el.value === 'ничего не снято'
+                            ? ''
+                            : (currentTrade?.entryExtreme !== '' ? numStr(currentTrade.entryExtreme) : '');
+                    }
+                }
+                if (el.id === 'f-struct') {
+                    saveState({ struct30: el.value });
+                    syncPresetHighlights();
+                }
+                if (el.id === 'f-conf') {
+                    saveState({ conf: el.value });
+                    autoSuggestError();
+                }
+                updatePreviewBar();
+            });
+            el.addEventListener('input', () => updatePreviewBar());
+        });
 
         dynFieldsEl.querySelectorAll('.bt-group').forEach(grp => {
             grp.addEventListener('click', e => {
@@ -1708,22 +2188,11 @@
                 const val = chip.dataset.val;
                 if (grp.id === 'f-trend') saveState({ trend: val });
                 if (grp.id === 'f-zone') saveState({ zone: val });
-                if (grp.id === 'f-fuel30' || grp.id === 'f-touch30' || grp.id === 'f-against30') {
-                    sync30TradesChecklist();
-                }
                 if (grp.id === 'f-res30') {
                     const manWrap = document.getElementById('bt-manual-r-wrap');
                     if (manWrap) {
                         manWrap.style.display = (val === 'частичная фиксация' || val === 'закрыл руками') ? 'flex' : 'none';
                     }
-                }
-                if (grp.id === 'f-liq') {
-                    saveState({ liq: val });
-                    if (val === 'нет' && getChipVal('f-res') === 'Пропуск') {
-                        const confEl = document.getElementById('f-conf');
-                        if (confEl) confEl.value = 'Без подтверждения';
-                    }
-                    autoSuggestError();
                 }
                 if (grp.id === 'f-res') {
                     if (val === 'Пропуск' && getChipVal('f-liq') === 'нет') {
@@ -1732,18 +2201,14 @@
                     }
                     autoSuggestError();
                 }
+                updatePreviewBar();
             });
         });
 
-        const confSel = document.getElementById('f-conf');
-        if (confSel) {
-            confSel.addEventListener('change', e => {
-                saveState({ conf: e.target.value });
-                autoSuggestError();
-            });
-        }
-
         autoSuggestError();
+        restoreSavedTradeState();
+        syncPresetHighlights();
+        updatePreviewBar();
     }
 
     function syncLiveChartChanges() {
@@ -1752,9 +2217,10 @@
         const prevId = currentTrade?.id;
         const prevSig = currentTrade?.signature;
 
-        if (!scanChartTrades(true) || !currentTrade) return;
+        if (!scanChartTrades(true, false) || !currentTrade) return;
 
         if (currentTrade.id !== prevId) {
+            screenshotUrl = '';
             manualSessionOverride = null;
             if (commentInpEl) commentInpEl.value = '';
             renderMainFields();
@@ -1769,15 +2235,24 @@
             setChipVal('f-res30', defRes30);
             setChipVal('f-hit1r', currentTrade.reached1R ? 'да' : 'нет');
             setChipVal('f-hit3r', currentTrade.reached3R ? 'да' : 'нет');
-			if (document.getElementById('f-candle-col')) {
+            if (document.getElementById('f-candle-col')) {
                 const isLong = currentTrade.direction === 'LONG';
                 setCandleColVal(currentTrade.ind?.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3'));
             }
-            if (currentTrade.entryExtreme && document.getElementById('f-swept-lvl')) {
-                document.getElementById('f-swept-lvl').value = numStr(currentTrade.entryExtreme);
+            const sweptLvlEl = document.getElementById('f-swept-lvl');
+            const sweptSelVal = document.getElementById('f-swept')?.value;
+            if (sweptLvlEl) {
+                sweptLvlEl.value = (sweptSelVal === 'ничего не снято' || currentTrade.entryExtreme === '')
+                    ? ''
+                    : numStr(currentTrade.entryExtreme);
+            }
+            const fillSweptBtn = document.getElementById('bt-fill-swept-lvl');
+            if (fillSweptBtn) {
+                fillSweptBtn.title = `Вернуть цену минимума/максимума свечи входа (${currentTrade.entryExtreme})`;
             }
             updateHeaderUI();
             autoSuggestError();
+            updatePreviewBar();
             pulseTradeCard('#e5c158');
         }
     }
@@ -1787,9 +2262,9 @@
         if (!model) return;
 
         const selId = detectCurrentlySelectedToolId(model);
-        if (selId !== lastChartSelectedId) {
+        if (selId && selId !== lastChartSelectedId) {
             lastChartSelectedId = selId;
-            if (selId) lastSelectedToolId = selId;
+            lastSelectedToolId = selId;
         }
 
         try {
@@ -1818,8 +2293,8 @@
         const shouldShowCols = showColumnEditor || state.presetKey === 'custom';
         colsWrap.style.display = shouldShowCols ? 'block' : 'none';
         toggleColsBtn.innerText = shouldShowCols
-            ? '▲ Скрыть конструктор переменных'
-            : `🔧 Конструктор переменных и столбцов (${getActiveColumns().length} шт.)`;
+            ? '▲ Скрыть список колонок'
+            : `🔧 Настроить колонки таблицы (${getActiveColumns().length} шт.)`;
 
         const cols = getActiveColumns();
         const baseColIdx = colLetterToIndex(getActivePasteCol());
@@ -1828,10 +2303,10 @@
         pillsContainer.innerHTML = cols.map((tok, idx) => {
             const colLet = colIndexToLetter(baseColIdx + idx);
             return `
-                <div class="bt-drag-pill" data-idx="${idx}" data-tok="${tok}" title="Столбец ${colLet} в таблице. Перетащите мышкой для смены порядка">
+                <div class="bt-drag-pill" data-idx="${idx}" data-tok="${tok}" title="Столбец ${colLet}. Перетащите мышкой для смены порядка">
                     <span class="bt-pill-num" style="color:#e5c158; font-weight:700;">${colLet}</span>
                     <span>${TOKEN_LABELS[tok] || tok}</span>
-                    <span class="bt-del-col" data-del="${idx}" title="Удалить переменную">✕</span>
+                    <span class="bt-del-col" data-del="${idx}" title="Удалить колонку">✕</span>
                 </div>
             `;
         }).join('');
@@ -1918,26 +2393,36 @@
         let wins = 0, losses = 0, totalR = 0;
         for (const item of bucket.batchQueue) {
             if (!item || typeof item !== 'object') continue;
-            if (item.result === 'Тейк' || item.result === 'цель') {
+            const res = item.activeResult || item.result;
+            const rrVal = Number(item.riskReward ?? item.rr ?? 0);
+            if (res === 'Тейк' || res === 'цель') {
                 wins++;
-                totalR += Number(item.rr || 0);
-            } else if (item.result === 'Стоп' || item.result === 'стоп') {
+                totalR += rrVal;
+            } else if (res === 'Стоп' || res === 'стоп') {
                 losses++;
                 totalR -= 1;
+            } else if (typeof item.rOut === 'number' && !isNaN(item.rOut)) {
+                totalR += item.rOut;
             }
         }
         const closed = wins + losses;
         const wr = closed > 0 ? Math.round((wins / closed) * 100) : 0;
         const sign = totalR > 0 ? '+' : '';
-        return `Серия (${PRESET_SCHEMAS[state.presetKey]?.name || 'Свой журнал'}): ${bucket.batchQueue.length} сд. | WR: ${wr}% (${wins}Т/${losses}С) | ${sign}${totalR.toFixed(2)} R`;
+        return {
+            count: bucket.batchQueue.length,
+            totalR,
+            shortText: bucket.batchQueue.length > 0 ? `${bucket.batchQueue.length} · ${sign}${totalR.toFixed(1)}R` : '0',
+            tooltip: `Сохранено сделок: ${bucket.batchQueue.length} | Винрейт: ${wr}% (${wins} плюс / ${losses} стоп) | Итог: ${sign}${totalR.toFixed(2)} R`
+        };
     }
 
     function updateHeaderUI() {
         const schemaObj = PRESET_SCHEMAS[state.presetKey];
         const bucket = getTplBucket();
+        const cols = getActiveColumns();
 
         document.getElementById('bt-active-tpl-title').innerText =
-            schemaObj ? schemaObj.name : `Свой журнал (${getActiveColumns().length} перем.)`;
+            schemaObj ? schemaObj.name : `Свой журнал (${cols.length} кол.)`;
 
         collapsibleBodyEl.style.display = state.minimized ? 'none' : 'block';
 
@@ -1945,28 +2430,35 @@
             btn.classList.toggle('active', btn.dataset.prof === state.outputProfile);
         });
 
-        const isReEdit = currentTrade && bucket.lastSavedSig === currentTrade.signature && bucket.batchQueue.length > 0;
+        const isReEdit = !!(currentTrade && bucket.batchQueue.some(item => item.tradeId === currentTrade.id || item.signature === currentTrade.signature));
         const pasteCol = getActivePasteCol();
+        const firstColShort = SHORT_COL_NAMES[cols[0]] || cols[0] || '';
 
         mainBtnText.innerText = isReEdit
-            ? `Обновить сделку (в стлб. ${pasteCol})`
-            : `Скопировать строку (в стлб. ${pasteCol})`;
+            ? `Обновить строку (в стлб. ${pasteCol} · ${firstColShort})`
+            : `Скопировать строку (в стлб. ${pasteCol} · ${firstColShort})`;
 
-        document.getElementById('bt-batch-count').innerText = bucket.batchQueue.length;
+        const bStats = computeBatchStats();
+        const batchCntEl = document.getElementById('bt-batch-count');
+        batchCntEl.innerText = bStats.shortText;
+        batchCntEl.style.color = bStats.totalR > 0 ? '#34d399' : (bStats.totalR < 0 ? '#f87171' : '#f3d26b');
+
         document.getElementById('bt-copy-batch-btn').title =
-            `${computeBatchStats()}\nКликните, чтобы скопировать всю пачку (вставьте в любую пустую строку столбца ${pasteCol})`;
+            `${bStats.tooltip}\nНажмите, чтобы скопировать все сохранённые сделки сразу (для вставки в столбец ${pasteCol})`;
 
         updateScreenshotPillUI();
 
         if (!currentTrade) return;
 
         const total = allChartTrades.length || 1;
-        document.getElementById('bt-trade-counter').innerText = `${activeTradeIdx + 1}/${total}`;
+        const counterEl = document.getElementById('bt-trade-counter');
+        counterEl.innerText = `${isReEdit ? '✓ ' : ''}${activeTradeIdx + 1}/${total}`;
+        counterEl.style.color = isReEdit ? '#34d399' : '#e5c158';
 
         document.getElementById('bt-info-sym').innerText = `${currentTrade.symbol} · ${currentTrade.timeframeLat}`;
         sessionPillBtn.innerText = (manualSessionOverride ? '' : '⚡ ') + getActiveSession();
         document.getElementById('bt-info-date').innerText = `${currentTrade.shortDate} · ${currentTrade.mskTime} МСК`;
-        document.getElementById('bt-info-date').title = `Дата входа: ${currentTrade.candleDate} (${currentTrade.mskTime} МСК)`;
+        document.getElementById('bt-info-date').title = `Дата и время входа: ${currentTrade.candleDate}, ${currentTrade.mskTime} МСК`;
 
         const badge = document.getElementById('bt-info-badge');
         badge.innerText = `${currentTrade.direction} · ${numStr(currentTrade.riskReward)}R`;
@@ -1975,196 +2467,88 @@
         document.getElementById('bt-info-en').innerText = numStr(currentTrade.entryPrice);
         document.getElementById('bt-info-st').innerText = numStr(currentTrade.stopPrice);
         document.getElementById('bt-info-tg').innerText = numStr(currentTrade.targetPrice);
+
+        updatePreviewBar();
     }
 
-    function buildAndCopyRow() {
+    function buildAndCopyRow(stayOpen = false) {
         if (!currentTrade) return;
-        const cols = getActiveColumns();
-        const t = currentTrade;
-        const isLong = t.direction === 'LONG';
-        const hasRes30 = cols.includes('res_30');
-        const pasteCol = getActivePasteCol();
-        const startRow = getActiveStartRow();
-
-        const resStd = getChipVal('f-res', t.autoResult);
-        const res30Val = getChipVal('f-res30', t.autoResult === 'Тейк' ? 'цель' : (t.autoResult === 'Стоп' ? 'стоп' : 'безубыток'));
-        const activeResult = hasRes30 ? res30Val : resStd;
+        const snap = collectCurrentSnapshot();
+        if (!snap) return;
 
         const bucket = getTplBucket();
-        const isReEdit = bucket.lastSavedSig === t.signature && bucket.batchQueue.length > 0;
-
-        const manualRStr = cleanText(document.getElementById('f-manual-r30')?.value || '');
-        const manualRNum = manualRStr ? parseFloat(manualRStr.replace(',', '.')) : NaN;
-
-        let rOut = '';
-        let newCum = bucket.cumR;
-        let newMax = bucket.maxCumR;
-
-        if (activeResult === 'Тейк' || activeResult === 'цель') {
-            rOut = t.riskReward;
-            newCum = Number((bucket.cumR + rOut).toFixed(2));
-        } else if (activeResult === 'Стоп' || activeResult === 'стоп') {
-            rOut = -1;
-            newCum = Number((bucket.cumR - 1).toFixed(2));
-        } else if (activeResult === 'Безубыток' || activeResult === 'безубыток') {
-            rOut = 0;
-        } else if (!isNaN(manualRNum)) {
-            rOut = manualRNum;
-            newCum = Number((bucket.cumR + rOut).toFixed(2));
+        const existingIdx = bucket.batchQueue.findIndex(item => item.tradeId === snap.tradeId || item.signature === snap.signature);
+        const newBatch = [...bucket.batchQueue];
+        if (existingIdx >= 0) {
+            newBatch[existingIdx] = snap;
+        } else {
+            newBatch.push(snap);
         }
 
-        if (newCum > newMax) newMax = newCum;
-        const dd = Number(Math.max(0, newMax - newCum).toFixed(2));
-
-        const aoiInp = document.getElementById('f-aoi-num');
-        const aoiNum = aoiInp ? (parseInt(aoiInp.value, 10) || 1) : state.aoiNum;
-
-        const flD = getFlowVal('f-fl-d', state.flowD);
-        const fl4H = getFlowVal('f-fl-4h', state.flow4H);
-        const fl1H = getFlowVal('f-fl-1h', state.flow1H);
-        const fl15M = getFlowVal('f-fl-15m', state.flow15M);
-
-        const f1 = getChipVal('f-f1', 'да'), f2 = getChipVal('f-f2', 'да'), f3 = getChipVal('f-f3', 'нет'), f4 = getChipVal('f-f4', 'да');
-        const factorsCnt = [f1, f2, f3, f4].filter(x => x === 'да').length;
-
-        const stopUsd = Math.max(0.01, t.riskPts);
-        const lots30 = Math.floor((30 / stopUsd / 100) * 100) / 100;
-        const profitUsd = rOut === '' ? '' : Number((Number(rOut) * lots30 * 100 * stopUsd).toFixed(2));
-        const lotsOff = Number(((10000 * 0.003) / (stopUsd / 0.01 * 1)).toFixed(2));
-        const rOutOff = resStd === 'Стоп' ? -1 : (resStd === 'Тейк' ? Number((0.5 * 3 + 0.5 * t.riskReward).toFixed(2)) : 0);
-
-        const comment = cleanText(commentInpEl?.value || '');
-        const chk30 = getChipVal('f-check30', 'да');
-        const img = cleanText(screenshotUrl);
-        const sweptVal = document.getElementById('f-swept')?.value || 'приманка';
-        const sweptLvlRaw = cleanText(document.getElementById('f-swept-lvl')?.value || '');
-        const sweptLvlFormatted = (sweptVal === 'ничего не снято' || !sweptLvlRaw) ? '' : numStr(sweptLvlRaw);
-
-        const schemaStyle = PRESET_SCHEMAS[state.presetKey] || PRESET_SCHEMAS.bt_main;
-        const f = (tok, fallback) => buildDynamicFormula(tok, cols, pasteCol, startRow, fallback);
-
-        const tokenValues = {
-            symbol: t.symbol,
-            date: t.candleDate,
-            time_msk: t.mskTime,
-            time_slot: t.officeTimeSlot,
-            session: getActiveSession(),
-            trend: getChipVal('f-trend', isLong ? 'Тренд вверх' : 'Тренд вниз'),
-            trend_h4: getChipVal('f-h4-trend', isLong ? 'Вверх' : 'Вниз'),
-            tf: schemaStyle.tfStyle === 'cyr' ? t.timeframeCyr : t.timeframeLat,
-            dir_lower: isLong ? 'лонг' : 'шорт',
-            dir_title: isLong ? 'Лонг' : 'Шорт',
-            zone: getChipVal('f-zone', state.zone),
-            zone_30: document.getElementById('f-zone30')?.value || 'Разворотная зона',
-            poi_type: getChipVal('f-poi-type', 'OB'),
-            form_m1: getChipVal('f-form-m1', 'SCOB'),
-            liq: getChipVal('f-liq', state.liq),
-            react: getChipVal('f-react', 'да'),
-            conf: document.getElementById('f-conf')?.value || state.conf,
-            entry: numStr(t.entryPrice),
-            stop: numStr(t.stopPrice),
-            target: numStr(t.targetPrice),
-            upper_bound: numStr(t.upperBound),
-            lower_bound: numStr(t.lowerBound),
-            risk_pts: f('risk_pts', numStr(t.riskPts)),
-            pot_pts: f('pot_pts', numStr(t.potPts)),
-            rr: f('rr', numStr(t.riskReward)),
-            lots_30: f('lots_30', numStr(lots30)),
-            lots_off: f('lots_off', numStr(lotsOff)),
-            result: resStd,
-            res_30: res30Val,
-            manual_r_30: (res30Val === 'частичная фиксация' || res30Val === 'закрыл руками') && !isNaN(manualRNum) ? numStr(manualRNum) : '',
-            res_off: resStd === 'Безубыток' ? 'Сейф/БУ' : resStd,
-            r_out: f('r_out', rOut === '' ? '' : numStr(rOut)),
-            r_out_off: f('r_out_off', numStr(rOutOff)),
-            profit_usd: f('profit_usd', profitUsd === '' ? '' : numStr(profitUsd)),
-            prof_pct_off: f('prof_pct_off', numStr(Number((rOutOff * 0.003).toFixed(4)))),
-            move_pts: f('move_pts', numStr(resStd === 'Тейк' ? t.potPts : (resStd === 'Стоп' ? -t.riskPts : 0))),
-            cum_r: f('cum_r', resStd === 'Пропуск' ? numStr(bucket.cumR) : numStr(newCum)),
-            dd_r: f('dd_r', resStd === 'Пропуск' ? numStr(0) : numStr(dd)),
-            hit_1r: getChipVal('f-hit1r', t.reached1R ? 'да' : 'нет'),
-            hit_3r: getChipVal('f-hit3r', t.reached3R ? 'да' : 'нет'),
-            error: document.getElementById('f-err')?.value || '—',
-            error_poi: document.getElementById('f-err')?.value || '—',
-            comment: comment,
-            comment_30: comment,
-            screenshot: img,
-            aoi_num: aoiNum,
-            flow_d: flD,
-            flow_4h: fl4H,
-            flow_1h: fl1H,
-            flow_15m: fl15M,
-            struct_30: document.getElementById('f-struct')?.value || (isLong ? 'слом ↑' : 'слом ↓'),
-            swept_30: sweptVal,
-            swept_level_30: sweptLvlFormatted,
-            candle_col: document.getElementById('f-candle-col')?.value || (isLong ? 'Лонг 3' : 'Шорт 3'),
-            against_flow: getChipVal('f-against30', 'нет'),
-            fuel_30: getChipVal('f-fuel30', 'да'),
-            touch_30: getChipVal('f-touch30', '1'),
-            check_30: chk30,
-            tf_ok: 'да',
-            emotion: 'Спокоен',
-            safe_pct: numStr(0.5),
-            safe_rr: numStr(3),
-            risk_pct_col: numStr(0.003),
-            f_ret: f1,
-            f_ob: f2,
-            f_fvg: f3,
-            f_liq: f4,
-            factors_cnt: f('factors_cnt', factorsCnt),
-            valid_aoi: f('valid_aoi', factorsCnt >= 2 ? 'ДА' : 'нет'),
-            reached: getChipVal('f-reached', 'да'),
-            aoi_res: getChipVal('f-aoi-res', 'Отбой'),
-            empty: ''
-        };
-
-        const rowArr = cols.map(tok => tokenValues[tok] ?? '');
-        const tsvString = rowArr.join('\t');
+        const totals = recalculateQueueTotals(newBatch);
+        const rendered = renderSnapshotToRow(snap);
+        const tsvString = rendered.tsv;
+        const cols = getActiveColumns();
+        const firstColShort = SHORT_COL_NAMES[cols[0]] || cols[0] || '';
 
         navigator.clipboard.writeText(tsvString).then(() => {
-            const newBatch = [...bucket.batchQueue];
-            const batchItem = { tsv: tsvString, result: activeResult, rr: t.riskReward };
-            if (isReEdit && newBatch.length > 0) {
-                newBatch[newBatch.length - 1] = batchItem;
-            } else {
-                newBatch.push(batchItem);
-            }
-
             saveTplBucket({
                 batchQueue: newBatch,
-                lastSavedSig: t.signature,
-                cumR: newCum,
-                maxCumR: newMax
+                lastSavedSig: snap.signature,
+                cumR: totals.cumR,
+                maxCumR: totals.maxCumR
             });
 
             saveState({
-                aoiNum: cols.includes('valid_aoi') ? aoiNum + 1 : aoiNum,
-                flowD: flD, flow4H: fl4H, flow1H: fl1H, flow15M: fl15M
+                aoiNum: (cols.includes('valid_aoi') && existingIdx === -1) ? snap.aoiNum + 1 : snap.aoiNum,
+                flowD: snap.flD, flow4H: snap.fl4H, flow1H: snap.fl1H, flow15M: snap.fl15M,
+                struct30: snap.struct_30
             });
 
-            if (commentInpEl) commentInpEl.value = '';
-            if (commentMenuEl) commentMenuEl.style.display = 'none';
-            screenshotUrl = '';
-            manualSessionOverride = null;
+            if (!stayOpen) {
+                modalEl.style.display = 'none';
+            }
             updateHeaderUI();
-            modalEl.style.display = 'none';
-            showToast(`✓ Скопировано! Вставьте (Ctrl+V) в любую строку столбца ${pasteCol}`);
+            showToast(`✓ Скопировано! Вставьте (Ctrl+V) в столбец ${rendered.pasteCol} (${firstColShort})`);
         }).catch(() => {
-            showToast('Ошибка доступа к буферу обмена', 'error');
+            showToast('Не удалось скопировать в буфер обмена', 'error');
         });
     }
 
+    function applyProfile(prof, copyImmediately = false) {
+        const sep = prof === 'en_form' ? '.' : ',';
+        saveState({ outputProfile: prof, decimalSep: sep });
+        const sweptLvlEl = document.getElementById('f-swept-lvl');
+        if (sweptLvlEl && sweptLvlEl.value) {
+            sweptLvlEl.value = numStr(sweptLvlEl.value);
+        }
+        updateHeaderUI();
+        const labels = {
+            gs_ru: '📊 Google Docs RU',
+            ru_form: '📗 Excel RU',
+            en_form: '🌐 EN'
+        };
+        if (copyImmediately && currentTrade) {
+            buildAndCopyRow(true);
+        } else {
+            showToast(`Выбран формат: ${labels[prof]}`);
+        }
+    }
+
     document.querySelectorAll('.bt-prof-btn').forEach(btn => {
+        btn.onclick = () => applyProfile(btn.dataset.prof, false);
+    });
+
+    document.getElementById('bt-toggle-fix-help').onclick = () => {
+        isFixHelpOpen = !isFixHelpOpen;
+        fixHelpBoxEl.style.display = isFixHelpOpen ? 'block' : 'none';
+    };
+
+    document.querySelectorAll('.bt-fix-action').forEach(btn => {
         btn.onclick = () => {
-            const prof = btn.dataset.prof;
-            const sep = prof === 'en_form' ? '.' : ',';
-            saveState({ outputProfile: prof, decimalSep: sep });
-            updateHeaderUI();
-            const labels = {
-                ru_form: '🇷🇺 RU (Запятая + =ЕСЛИ)',
-                en_form: '🌐 EN (Точка + =IF)'
-            };
-            showToast(`Включен профиль: ${labels[prof]}`);
+            isFixHelpOpen = false;
+            fixHelpBoxEl.style.display = 'none';
+            applyProfile(btn.dataset.fix, true);
         };
     });
 
@@ -2186,6 +2570,7 @@
             customStartRow: r
         });
         renderSettingsDrawer();
+        updatePreviewBar();
     };
 
     sessionPillBtn.onclick = () => {
@@ -2201,9 +2586,10 @@
         if (screenshotUrl) {
             screenshotUrl = '';
             updateScreenshotPillUI();
+            updatePreviewBar();
             showToast('Ссылка на скриншот удалена');
         } else {
-            showToast('Нажмите Alt+S на графике, а затем Ctrl+V прямо в окне!');
+            showToast('Нажмите Alt+S на графике, а затем Ctrl+V в этом окне');
         }
     };
 
@@ -2243,7 +2629,7 @@
         renderMainFields();
         renderSettingsDrawer();
         updateHeaderUI();
-        showToast('Схема переменных возвращена к шаблону');
+        showToast('Колонки возвращены к стандартному шаблону');
     };
 
     document.getElementById('bt-add-token-select').onchange = e => {
@@ -2265,20 +2651,28 @@
     document.getElementById('bt-copy-batch-btn').onclick = () => {
         const bucket = getTplBucket();
         if (!bucket.batchQueue.length) {
-            showToast('Пачка сделок для этого журнала пока пуста', 'error');
+            showToast('Список сохранённых сделок пока пуст', 'error');
             return;
         }
-        const allTsv = bucket.batchQueue.map(x => x.tsv).join('\n');
+        const allTsv = bucket.batchQueue.map(item => {
+            if (item && item.candleDate) return renderSnapshotToRow(item).tsv;
+            return item?.tsv || '';
+        }).filter(Boolean).join('\n');
+
         const pasteCol = getActivePasteCol();
         navigator.clipboard.writeText(allTsv).then(() => {
-            showToast(`✓ Скопировано сделок: ${bucket.batchQueue.length}! Вставьте в любую пустую строку столбца ${pasteCol} (${computeBatchStats()})`);
+            showToast(`✓ Скопировано сделок: ${bucket.batchQueue.length}! Вставьте в столбец ${pasteCol}`);
         });
     };
 
     document.getElementById('bt-clear-batch-btn').onclick = () => {
         saveTplBucket({ batchQueue: [], cumR: 0, maxCumR: 0, lastSavedSig: '' });
+        screenshotUrl = '';
+        manualSessionOverride = null;
+        if (commentInpEl) commentInpEl.value = '';
+        renderMainFields();
         updateHeaderUI();
-        showToast('Пачка сделок и счетчик серии очищены');
+        showToast('Список сохранённых сделок очищен');
     };
 
     function switchChartTrade(delta) {
@@ -2287,6 +2681,7 @@
         currentTrade = allChartTrades[activeTradeIdx];
         lastSelectedToolId = currentTrade.id;
         lastChartSelectedId = detectCurrentlySelectedToolId(getTvModel());
+        screenshotUrl = '';
         manualSessionOverride = null;
         if (commentInpEl) commentInpEl.value = '';
         if (commentMenuEl) commentMenuEl.style.display = 'none';
@@ -2302,12 +2697,15 @@
         if (!currentTrade) return;
         const tsv = [numStr(currentTrade.entryPrice), numStr(currentTrade.stopPrice), numStr(currentTrade.targetPrice)].join('\t');
         navigator.clipboard.writeText(tsv).then(() => {
-            showToast('✓ Скопированы 3 цены: Вход + Стоп + Цель!');
+            showToast('✓ Скопированы 3 цены: Вход, Стоп и Цель');
         });
     };
 
+    commentInpEl.addEventListener('input', () => updatePreviewBar());
+
     document.getElementById('bt-clear-comment').onclick = () => {
         commentInpEl.value = '';
+        updatePreviewBar();
         commentInpEl.focus();
     };
 
@@ -2320,10 +2718,11 @@
         item.onclick = () => {
             commentInpEl.value = item.innerText;
             commentMenuEl.style.display = 'none';
+            updatePreviewBar();
         };
     });
 
-	modalEl.addEventListener('click', e => {
+    modalEl.addEventListener('click', e => {
         if (!e.target.closest('#bt-comment-menu') && !e.target.closest('#bt-toggle-presets')) {
             commentMenuEl.style.display = 'none';
         }
@@ -2333,7 +2732,7 @@
         }
     });
 
-    mainCopyBtn.onclick = buildAndCopyRow;
+    mainCopyBtn.onclick = () => buildAndCopyRow(false);
     document.getElementById('bt-close-x').onclick = () => { modalEl.style.display = 'none'; };
     document.getElementById('bt-fab-btn').onclick = () => openModal();
 
@@ -2363,8 +2762,8 @@
     })();
 
     function openModal() {
-        lastChartSelectedId = null;
-        if (!scanChartTrades(false)) return;
+        if (!scanChartTrades(false, true)) return;
+        screenshotUrl = '';
         manualSessionOverride = null;
         if (commentInpEl) commentInpEl.value = '';
         if (commentMenuEl) commentMenuEl.style.display = 'none';
@@ -2380,16 +2779,26 @@
 
     window.addEventListener('paste', e => {
         if (modalEl.style.display !== 'block') return;
-        const tag = document.activeElement?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         const pasted = (e.clipboardData || window.clipboardData)?.getData('text') || '';
-        if (/^https?:\/\//i.test(pasted.trim())) {
+        const urlMatch = pasted.trim().match(/https?:\/\/[^\s]+/i);
+
+        if (urlMatch) {
             e.preventDefault();
-            screenshotUrl = pasted.trim();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            screenshotUrl = urlMatch[0];
             updateScreenshotPillUI();
-            showToast('📸 Скриншот прикреплен ✓');
+            updatePreviewBar();
+            showToast('📸 Скриншот прикреплён ✓');
+            return;
         }
-    });
+
+        if (!isOurInputFocused(e.target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        }
+    }, true);
 
     function isOurInputFocused(target) {
         if (!target) return false;
@@ -2425,8 +2834,11 @@
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
+            const ccMenu = document.getElementById('bt-cc-menu');
             if (commentMenuEl && commentMenuEl.style.display === 'block') {
                 commentMenuEl.style.display = 'none';
+            } else if (ccMenu && ccMenu.style.display === 'block') {
+                ccMenu.style.display = 'none';
             } else if (inOurInput) {
                 e.target.blur();
                 modalEl.focus();
@@ -2442,7 +2854,7 @@
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            buildAndCopyRow();
+            buildAndCopyRow(false);
             return;
         }
 
@@ -2514,6 +2926,7 @@
                 } else if (document.getElementById('f-form-m1') && formMap[e.key]) {
                     setChipVal('f-form-m1', formMap[e.key]);
                 }
+                updatePreviewBar();
             } else if (resMap[kl]) {
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 if (document.getElementById('f-res30')) {
@@ -2529,10 +2942,12 @@
                     }
                     autoSuggestError();
                 }
+                updatePreviewBar();
             } else if (trendMap[kl]) {
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 setChipVal('f-trend', trendMap[kl]);
                 saveState({ trend: trendMap[kl] });
+                updatePreviewBar();
             } else if (confMap[kl]) {
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 const confEl = document.getElementById('f-conf');
@@ -2541,6 +2956,7 @@
                     saveState({ conf: confMap[kl] });
                     autoSuggestError();
                 }
+                updatePreviewBar();
             } else if (e.code === 'Space') {
                 e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
                 const nextLiq = getChipVal('f-liq', 'да') === 'да' ? 'нет' : 'да';
@@ -2551,6 +2967,7 @@
                     if (confEl) confEl.value = 'Без подтверждения';
                 }
                 autoSuggestError();
+                updatePreviewBar();
             }
         }
     }, true);
