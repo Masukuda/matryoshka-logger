@@ -90,7 +90,7 @@
             sessionStyle: 'std',
             tfStyle: 'lat',
             columns: [
-                'time_slot', 'dir_title', 'tf_ok', 'tf_ok', 'tf_ok', 'tf_ok', 'form_m1',
+                'time_slot', 'dir_title', 'tf_d1', 'tf_h4', 'tf_h1', 'tf_m15', 'form_m1',
                 'lots_off', 'entry', 'stop', 'target', 'safe_pct', 'safe_rr', 'risk_pct_col', 'rr',
                 'res_off', 'r_out_off', 'prof_pct_off', 'move_pts', 'tf_ok', 'emotion', 'screenshot', 'comment'
             ]
@@ -120,6 +120,10 @@
         flow_4h: 'Поток H4',
         flow_1h: 'Поток H1',
         flow_15m: 'Поток M15',
+        tf_d1: 'D1 по направлению (да/нет)',
+        tf_h4: 'H4 по направлению (да/нет)',
+        tf_h1: 'H1 по направлению (да/нет)',
+        tf_m15: 'M15 по направлению (да/нет)',
         struct_30: 'Структура перед входом',
         zone: 'Зона входа',
         zone_30: 'Вид зоны',
@@ -184,7 +188,7 @@
         symbol: 'Тикер', date: 'Дата', time_msk: 'Время', time_slot: 'Слот',
         session: 'Сессия', tf: 'ТФ', dir_title: 'Направл.', dir_lower: 'Сторона',
         trend: 'Фаза', trend_h4: 'Тренд H4', flow_d: 'Поток Д', flow_4h: 'Поток 4Ч',
-        flow_1h: 'Поток 1Ч', flow_15m: 'Поток 15м', struct_30: 'Структура',
+        flow_1h: 'Поток 1Ч', flow_15m: 'Поток 15м', tf_d1: 'D1', tf_h4: 'H4', tf_h1: 'H1', tf_m15: 'M15', struct_30: 'Структура',
         zone: 'Зона', zone_30: 'Вид зоны', poi_type: 'POI', form_m1: 'Формация',
         candle_col: 'Свеча', liq: 'Ликв.', swept_30: 'Снято', swept_level_30: 'Ур. снятия',
         fuel_30: 'Топливо', touch_30: 'Касание', against_flow: 'Против пот.',
@@ -963,7 +967,7 @@
         if (tok === 'lots_off') {
             const en = vRef('entry'), st = vRef('stop'), rskPct = vRef('risk_pct_col');
             if (!en || !st || !rskPct || state.presetKey !== 'office') return fallbackVal;
-            return `=${IF}(${OR}(${en}=""${s}${st}=""${s}${en}=${st})${s}""${s}${ROUND}('Итоги месяца'!$B$2*${rskPct}/(ABS(${en}-${st})/${numStr(0.01)}*'Итоги месяца'!$B$3)${s}2))`;
+            return `=${IF}(${OR}(${en}=""${s}${st}=""${s}${en}=${st})${s}""${s}${ROUND}('Итоги месяца'!$B$2*${rskPct}/(ABS(${en}-${st})*100*'Итоги месяца'!$B$3)${s}2))`;
         }
 
         if (tok === 'r_out_off') {
@@ -1562,6 +1566,13 @@
         const fl15M = getFlowVal('f-fl-15m', state.flow15M);
 
         const f1 = getChipVal('f-f1', 'да'), f2 = getChipVal('f-f2', 'да'), f3 = getChipVal('f-f3', 'нет'), f4 = getChipVal('f-f4', 'да');
+        const matchDir = (fl) => fl === 'вверх' ? (isLong ? 'да' : 'нет') : (fl === 'вниз' ? (!isLong ? 'да' : 'нет') : 'нет');
+        const tfD1 = getChipVal('f-tf-d1', matchDir(flD));
+        const tfH4 = getChipVal('f-tf-h4', matchDir(fl4H));
+        const tfH1 = getChipVal('f-tf-h1', matchDir(fl1H));
+        const tfM15 = getChipVal('f-tf-m15', matchDir(fl15M));
+        const tfOk = getChipVal('f-tf-ok', 'да');
+        const emotionVal = document.getElementById('f-emotion')?.value || 'Спокоен';
         const factorsCnt = [f1, f2, f3, f4].filter(x => x === 'да').length;
 
         const stopUsd = Math.max(0.01, t.riskPts);
@@ -1604,6 +1615,7 @@
             riskPts: t.riskPts,
             potPts: t.potPts,
             riskReward: t.riskReward,
+            tfD1, tfH4, tfH1, tfM15, tfOk, emotionVal,
             lots30,
             lotsOff,
             resStd,
@@ -1707,8 +1719,12 @@
             fuel_30: snap.fuel_30,
             touch_30: snap.touch_30,
             check_30: snap.chk30,
-            tf_ok: 'да',
-            emotion: 'Спокоен',
+            tf_d1: snap.tfD1 ?? 'да',
+            tf_h4: snap.tfH4 ?? 'да',
+            tf_h1: snap.tfH1 ?? 'да',
+            tf_m15: snap.tfM15 ?? 'да',
+            tf_ok: snap.tfOk ?? 'да',
+            emotion: snap.emotionVal || 'Спокоен',
             safe_pct: numStr(0.5),
             safe_rr: numStr(3),
             risk_pct_col: numStr(0.003),
@@ -1822,6 +1838,12 @@
         if (saved.f4) setChipVal('f-f4', saved.f4);
         if (saved.reached) setChipVal('f-reached', saved.reached);
         if (saved.aoi_res) setChipVal('f-aoi-res', saved.aoi_res);
+        if (saved.tfD1) setChipVal('f-tf-d1', saved.tfD1);
+        if (saved.tfH4) setChipVal('f-tf-h4', saved.tfH4);
+        if (saved.tfH1) setChipVal('f-tf-h1', saved.tfH1);
+        if (saved.tfM15) setChipVal('f-tf-m15', saved.tfM15);
+        if (saved.tfOk) setChipVal('f-tf-ok', saved.tfOk);
+        setVal('f-emotion', saved.emotionVal);
 
         if (saved.signature === currentTrade.signature) {
             setVal('f-swept-lvl', saved.sweptVal === 'ничего не снято' ? '' : numStr(saved.sweptLvlRaw));
@@ -1910,6 +1932,20 @@
                 ], 'OB', 3);
         }
 
+        if (has('tf_d1') || has('tf_h4') || has('tf_h1') || has('tf_m15')) {
+            const matchDir = (fl) => fl === 'вверх' ? (isLong ? 'да' : 'нет') : (fl === 'вниз' ? (!isLong ? 'да' : 'нет') : 'нет');
+            const arrow = (fl) => fl === 'вверх' ? '↑' : (fl === 'вниз' ? '↓' : '—');
+            html += `
+                <div class="bt-lbl">ПОДТВЕРЖДЕНИЕ ТФ ПО НАПРАВЛЕНИЮ СДЕЛКИ ${ind.flows ? BOLT : ''}</div>
+                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:2px;">
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">D1 (${arrow(state.flowD)})</div>${makeSwitch('f-tf-d1', matchDir(state.flowD), 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">H4 (${arrow(state.flow4H)})</div>${makeSwitch('f-tf-h4', matchDir(state.flow4H), 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">H1 (${arrow(state.flow1H)})</div>${makeSwitch('f-tf-h1', matchDir(state.flow1H), 'gold')}</div>
+                    <div><div style="font-size:10px; color:#9ca3af; text-align:center; margin-bottom:2px;">M15 (${arrow(state.flow15M)})</div>${makeSwitch('f-tf-m15', matchDir(state.flow15M), 'gold')}</div>
+                </div>
+            `;
+        }
+
         if (has('form_m1')) {
             html += `<div class="bt-lbl">ФОРМАЦИЯ ВХОДА НА M1</div>` +
                 makeChips('f-form-m1', [
@@ -1919,6 +1955,17 @@
                     { val: 'Поглощение', label: 'Поглощение', kbd: '4' },
                     { val: 'Правильный откат', label: 'Правильный откат', kbd: '5' }
                 ], 'SCOB', 2);
+        }
+
+        if (has('tf_ok') || has('emotion')) {
+            html += `<div style="display:grid; grid-template-columns:1fr 1.6fr; gap:7px;">`;
+            if (has('tf_ok')) {
+                html += `<div><div class="bt-lbl">ПО СИСТЕМЕ</div>${makeSwitch('f-tf-ok', 'да', 'check')}</div>`;
+            }
+            if (has('emotion')) {
+                html += `<div><div class="bt-lbl">ЭМОЦИЯ</div>${makeSelect('f-emotion', ['Спокоен', 'Уверен', 'Страх', 'Жадность', 'FOMO', 'Тильт'], 'Спокоен')}</div>`;
+            }
+            html += `</div>`;
         }
 
         const hasAnyFlowOr30 = has('flow_d') || has('flow_4h') || has('flow_1h') || has('flow_15m') ||
