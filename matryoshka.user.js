@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      3.1
 // @description  Экспорт сделок из TradingView в Excel и Google Таблицы
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
@@ -20,7 +20,7 @@
     const isMac = /Mac|iPod|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
     const LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="7" r="4.5" stroke="#e5c158" stroke-width="2"/><path d="M5.5 19.5C5.5 15.634 8.41015 12.5 12 12.5C15.5899 12.5 18.5 15.634 18.5 19.5C18.5 20.8807 17.3807 22 16 22H8C6.61929 22 5.5 20.8807 5.5 19.5Z" stroke="#e5c158" stroke-width="2"/><circle cx="12" cy="17.5" r="1.5" fill="#e5c158"/></svg>`;
-    const BOLT = `<span class="bt-bolt" title="Заполнено автоматически по графику">⚡</span>`;
+    const BOLT = `<span class="bt-bolt" title="Заполнено автоматически по данным графика">⚡</span>`;
 
     const CANDLE_COLORS = {
         'Лонг 3': { hex: '#72f238', hint: 'салатовая' },
@@ -108,18 +108,18 @@
     const TOKEN_LABELS = {
         symbol: 'Инструмент (Тикер)',
         date: 'Дата входа',
-        time_msk: 'Время входа (МСК)',
-        time_slot: 'Временной слот (30м)',
+        time_msk: 'Время входа (строго МСК)',
+        time_slot: 'Время входа (МСК / Лок.)',
         session: 'Торговая сессия',
         tf: 'Таймфрейм',
         dir_title: 'Направление (Лонг/Шорт)',
         dir_lower: 'Сторона (лонг/шорт)',
         trend: 'Фаза рынка',
         trend_h4: 'Тренд H4',
-        flow_d: 'Поток D1',
-        flow_4h: 'Поток H4',
-        flow_1h: 'Поток H1',
-        flow_15m: 'Поток M15',
+        flow_d: 'Поток D1 (вверх/вниз)',
+        flow_4h: 'Поток H4 (вверх/вниз)',
+        flow_1h: 'Поток H1 (вверх/вниз)',
+        flow_15m: 'Поток M15 (вверх/вниз)',
         tf_d1: 'D1 по направлению (да/нет)',
         tf_h4: 'H4 по направлению (да/нет)',
         tf_h1: 'H1 по направлению (да/нет)',
@@ -151,7 +151,7 @@
         check_30: 'Чек-лист 7/7 (да/нет)',
         result: 'Результат (Тейк/Стоп/БУ)',
         res_30: 'Исход сделки',
-        res_off: 'Результат (с сейфом)',
+        res_off: 'Результат (Торговый офис)',
         manual_r_30: 'Фактический R (вручную)',
         r_out: 'Итог сделки, R',
         r_out_off: 'Итог R (с сейфом)',
@@ -169,7 +169,7 @@
         comment_30: 'Комментарий (30 сд.)',
         screenshot: 'Скриншот (ссылка)',
         aoi_num: '№ зоны / области',
-        tf_ok: 'ТФ по системе (да)',
+        tf_ok: 'По системе (да/нет)',
         safe_pct: 'Доля сейфа (0.5)',
         safe_rr: 'Уровень сейфа RR (3)',
         risk_pct_col: 'Риск на сделку % (0.003)',
@@ -185,23 +185,24 @@
     };
 
     const SHORT_COL_NAMES = {
-        symbol: 'Тикер', date: 'Дата', time_msk: 'Время', time_slot: 'Слот',
+        symbol: 'Тикер', date: 'Дата', time_msk: 'Время МСК', time_slot: 'Время',
         session: 'Сессия', tf: 'ТФ', dir_title: 'Направл.', dir_lower: 'Сторона',
         trend: 'Фаза', trend_h4: 'Тренд H4', flow_d: 'Поток Д', flow_4h: 'Поток 4Ч',
-        flow_1h: 'Поток 1Ч', flow_15m: 'Поток 15м', tf_d1: 'D1', tf_h4: 'H4', tf_h1: 'H1', tf_m15: 'M15', struct_30: 'Структура',
-        zone: 'Зона', zone_30: 'Вид зоны', poi_type: 'POI', form_m1: 'Формация',
-        candle_col: 'Свеча', liq: 'Ликв.', swept_30: 'Снято', swept_level_30: 'Ур. снятия',
-        fuel_30: 'Топливо', touch_30: 'Касание', against_flow: 'Против пот.',
-        conf: 'Подтв.', react: 'Реакция', entry: 'Вход', stop: 'Стоп', target: 'Цель',
-        upper_bound: 'Верх', lower_bound: 'Низ', risk_pts: 'Риск п.', pot_pts: 'Потенц.',
-        rr: 'R:R', lots_30: 'Лоты', lots_off: 'Объём', check_30: 'Чек 7/7',
-        result: 'Результат', res_30: 'Исход', res_off: 'Исход', manual_r_30: 'R ручн.',
-        r_out: 'Итог R', r_out_off: 'Итог RR', profit_usd: 'Итог $', prof_pct_off: 'Профит %',
-        move_pts: 'Ход цены', cum_r: 'Накоп. R', dd_r: 'Просадка', hit_1r: '1:1', hit_3r: '1:3',
-        error: 'Ошибка', error_poi: 'Ошибка', emotion: 'Эмоция', comment: 'Коммент.',
-        comment_30: 'Коммент.', screenshot: 'Скрин', aoi_num: '№ AOI', tf_ok: 'ТФ ок',
-        safe_pct: 'Сейф %', safe_rr: 'Сейф RR', risk_pct_col: 'Риск %',
-        f_ret: 'Откат', f_ob: 'OB H4', f_fvg: 'Имб H4', f_liq: 'Ликв',
+        flow_1h: 'Поток 1Ч', flow_15m: 'Поток 15м',
+        tf_d1: 'D1', tf_h4: 'H4', tf_h1: 'H1', tf_m15: 'M15',
+        struct_30: 'Структура', zone: 'Зона', zone_30: 'Вид зоны', poi_type: 'POI',
+        form_m1: 'Формация', candle_col: 'Свеча', liq: 'Ликв.', swept_30: 'Снято',
+        swept_level_30: 'Ур. снятия', fuel_30: 'Топливо', touch_30: 'Касание',
+        against_flow: 'Против пот.', conf: 'Подтв.', react: 'Реакция',
+        entry: 'Вход', stop: 'Стоп', target: 'Тейк', upper_bound: 'Верх', lower_bound: 'Низ',
+        risk_pts: 'Риск п.', pot_pts: 'Потенц.', rr: 'R:R', lots_30: 'Лоты', lots_off: 'Объём',
+        check_30: 'Чек 7/7', result: 'Результат', res_30: 'Исход', res_off: 'Результат',
+        manual_r_30: 'R ручн.', r_out: 'Итог R', r_out_off: 'Итог RR', profit_usd: 'Итог $',
+        prof_pct_off: 'Профит %', move_pts: 'Ход цены', cum_r: 'Накоп. R', dd_r: 'Просадка',
+        hit_1r: '1:1', hit_3r: '1:3', error: 'Ошибка', error_poi: 'Ошибка',
+        emotion: 'Эмоция', comment: 'Разбор', comment_30: 'Коммент.', screenshot: 'Скрин',
+        aoi_num: '№ AOI', tf_ok: 'По сист.', safe_pct: 'Сейф %', safe_rr: 'Сейф RR',
+        risk_pct_col: 'Риск %', f_ret: 'Откат', f_ob: 'OB H4', f_fvg: 'Имб H4', f_liq: 'Ликв',
         factors_cnt: 'Факторы', valid_aoi: 'Валидна', reached: 'Дошла', aoi_res: 'Итог AOI',
         empty: 'Пусто'
     };
@@ -213,11 +214,13 @@
         customStartRow: 2,
         outputProfile: 'gs_ru',
         decimalSep: ',',
+        timeMode: 'msk',
         trend: 'Тренд вверх',
         zone: 'Ордер-блок',
         liq: 'да',
         conf: 'Слом структуры',
         struct30: '',
+        emotion: 'Спокоен',
         aoiNum: 1,
         flowD: 'вверх',
         flow4H: 'вверх',
@@ -277,6 +280,7 @@
     let showColumnEditor = false;
     let isFixHelpOpen = false;
 
+    // --- Базовые утилиты чтения временных рядов и примитивов TradingView ---
     function getPlotRow(plotsObj, idx) {
         if (!plotsObj || idx == null) return null;
         try {
@@ -309,9 +313,10 @@
             }
 
             if (!targetTime) return null;
-            const first = typeof plotsObj.firstIndex === 'function' ? plotsObj.firstIndex() : 0;
+            const rawFirst = typeof plotsObj.firstIndex === 'function' ? plotsObj.firstIndex() : 0;
             const last = typeof plotsObj.lastIndex === 'function' ? plotsObj.lastIndex() : 1000;
-            let lo = first ?? 0, hi = last ?? 1000;
+            let lo = (rawFirst != null && rawFirst > -500000) ? rawFirst : 0;
+            let hi = last ?? 1000;
             while (lo <= hi) {
                 const mid = (lo + hi) >> 1;
                 const row = getPlotRow(plotsObj, mid);
@@ -324,11 +329,559 @@
         return null;
     }
 
-    function readMatryoshkaIndicators(model, entryTime, triggerIdx, isLong) {
-        const result = { flows: null, candleColor: null };
+    function extractDwgPrimitives(graphicsObj, getterName) {
+        const out = [];
+        if (!graphicsObj || typeof graphicsObj[getterName] !== 'function') return out;
+        try {
+            const visited = new Set();
+            const unpack = (obj) => {
+                if (!obj || typeof obj !== 'object' || visited.has(obj)) return;
+                visited.add(obj);
+                if (obj._primitivesDataById instanceof Map) {
+                    for (const v of obj._primitivesDataById.values()) {
+                        if (v) out.push(v);
+                    }
+                } else if (obj instanceof Map || obj instanceof Set || Array.isArray(obj)) {
+                    const iter = obj instanceof Map ? obj.values() : obj;
+                    for (const v of iter) {
+                        if (v && typeof v === 'object' && (v._primitivesDataById || v instanceof Map || v instanceof Set || Array.isArray(v))) {
+                            unpack(v);
+                        } else if (v && typeof v === 'object') {
+                            out.push(v);
+                        }
+                    }
+                }
+            };
+            unpack(graphicsObj[getterName]());
+        } catch (e) {}
+        return out;
+    }
+
+    // Память живых зон и уровней по абсолютным индексам свечей g._indexes[x]
+    const memoryBySym = {};
+    function getSymMemory(symKey) {
+        if (!memoryBySym[symKey]) {
+            memoryBySym[symKey] = { zones: new Map(), levels: new Map(), lqLabels: new Map() };
+        }
+        return memoryBySym[symKey];
+    }
+
+    function parseZoneLabelText(rawText, boxColor = 0, boxTva = '') {
+        const t = String(rawText || '').trim();
+        const low = t.toLowerCase();
+
+        if (low.includes('держит')) return null;
+
+        let zoneType = null;
+        let htfRank = 0;
+        if (low.includes('разворотная')) zoneType = 'Разворотная зона';
+        else if (low.includes('сильный покупатель')) zoneType = 'Сильный покупатель';
+        else if (low.includes('средний покупатель')) zoneType = 'Средний покупатель';
+        else if (low.includes('красивый покупатель')) zoneType = 'Красивый покупатель';
+        else if (low.includes('сильный продавец')) zoneType = 'Сильный продавец';
+        else if (low.includes('средний продавец')) zoneType = 'Средний продавец';
+        else if (low.includes('красивый продавец')) zoneType = 'Красивый продавец';
+        else if (low.includes('зона входа')) zoneType = 'Зона входа';
+        else if (low.includes('проторговка')) zoneType = 'Проторговка';
+        else if (/(^|\s)д\s*0[.,]5/i.test(t)) { zoneType = 'Зона Д 0.5'; htfRank = 4; }
+        else if (/4ч\s*0[.,]5/i.test(t)) { zoneType = 'Зона 4Ч 0.5'; htfRank = 3; }
+        else if (/1ч\s*0[.,]5/i.test(t)) { zoneType = 'Зона 1Ч 0.5'; htfRank = 2; }
+        else if (/15м\s*0[.,]5/i.test(t)) { zoneType = 'Зона 15м 0.5'; htfRank = 1; }
+
+        if (!zoneType && !t) {
+            if (boxColor === 4536050 && boxTva === 'top') zoneType = 'Сильный продавец';
+            else if (boxColor === 8493320 && boxTva === 'top') zoneType = 'Сильный покупатель';
+            else if (boxColor === 39167 && boxTva === 'bottom') zoneType = 'Проторговка';
+            else if (boxColor === 16736809 && boxTva === 'bottom') {
+                return {
+                    zoneType: 'Проторговка',
+                    fuel: 'нет',
+                    touch: '1',
+                    maxTouchNum: 1,
+                    against: 'да',
+                    side: 'ANY',
+                    isProtor: true,
+                    htfRank: 0,
+                    isDeadFallback: true,
+                    rawText: 'Проторговка · против потока (отработана)'
+                };
+            }
+        }
+
+        if (!zoneType) return null;
+
+        const fuel = low.includes('топливо') ? 'да' : 'нет';
+        const against = (low.includes('против потока') || boxColor === 16736809) ? 'да' : 'нет';
+        let touch = '1';
+        let maxTouchNum = 1;
+        const touchMatch = low.match(/касание\s*(\d+)/);
+        if (touchMatch) {
+            maxTouchNum = parseInt(touchMatch[1], 10) || 1;
+            if (maxTouchNum === 2) touch = '2';
+            else if (maxTouchNum >= 3) touch = '3 и больше';
+        }
+
+        const side = zoneType.includes('покупатель') ? 'LONG' : (zoneType.includes('продавец') ? 'SHORT' : 'ANY');
+        const isProtor = zoneType === 'Проторговка';
+        return {
+            zoneType,
+            fuel,
+            touch,
+            maxTouchNum,
+            against,
+            side,
+            isProtor,
+            htfRank,
+            isDeadFallback: !t,
+            rawText: t || `${zoneType} (отработана)`
+        };
+    }
+
+    function parseLiquidityLabelText(rawText, fallbackY) {
+        const t = String(rawText || '').trim();
+        if (!t) return null;
+        const low = t.toLowerCase();
+
+        if (low.includes('lq') && low.includes('снят')) {
+            let sweptType = 'уровень 15м';
+            if (low.includes('15m') || low.includes('15м')) sweptType = 'уровень 15м';
+            else if (low.includes('1h') || low.includes('1ч')) sweptType = 'уровень 1Ч';
+            else if (low.includes('4h') || low.includes('4ч')) sweptType = 'уровень 4Ч';
+            else if (low.includes('d') || low.includes('д')) sweptType = 'уровень Д';
+            return { sweptType, price: Number(fallbackY || 0), isDirectSweepLabel: true, rawText: t };
+        }
+
+        let sweptType = null;
+        if (low.includes('приманка')) sweptType = 'приманка';
+        else if (low === 'полка' || low.startsWith('полка ')) sweptType = 'полка';
+        else if (low.includes('15м/1ч')) sweptType = 'склейка 15м/1Ч';
+        else if (/д\s*[·.]\s*4ч/i.test(low)) sweptType = 'склейка Д · 4Ч';
+        else if (/15м\s+(макс|мин)/i.test(low)) sweptType = 'уровень 15м';
+        else if (/1ч\s+(макс|мин)/i.test(low)) sweptType = 'уровень 1Ч';
+        else if (/4ч\s+(макс|мин)/i.test(low)) sweptType = 'уровень 4Ч';
+        else if (/(^|\s)д\s+(макс|мин)/i.test(low)) sweptType = 'уровень Д';
+
+        if (!sweptType) return null;
+
+        let price = Number(fallbackY || 0);
+        const priceMatch = t.match(/(\d{3,6}[.,]\d+)/);
+        if (priceMatch) {
+            const parsedP = parseFloat(priceMatch[1].replace(',', '.'));
+            if (!isNaN(parsedP) && parsedP > 0) price = parsedP;
+        }
+        if (!price || isNaN(price)) return null;
+
+        return { sweptType, price, isDirectSweepLabel: false, rawText: t };
+    }
+
+    function computeTouchAtEntryBar(bars, barX1, triggerIdx, bottom, top, maxTouchNum) {
+        if (!bars || maxTouchNum <= 1 || barX1 < -100000 || triggerIdx == null || triggerIdx <= barX1) {
+            return '1';
+        }
+        let touches = 0;
+        let leftZone = false;
+        for (let i = barX1 + 1; i <= triggerIdx; i++) {
+            const b = getPlotRow(bars, i);
+            if (!b) continue;
+            const hi = Number(b[2]), lo = Number(b[3]);
+            if (isNaN(hi) || isNaN(lo)) continue;
+            const inZone = (hi >= bottom && lo <= top);
+            if (!inZone) {
+                leftZone = true;
+            } else if (leftZone) {
+                touches++;
+                leftZone = false;
+            }
+        }
+        const actual = Math.max(1, Math.min(touches || 1, maxTouchNum));
+        return actual === 1 ? '1' : (actual === 2 ? '2' : '3 и больше');
+    }
+
+    function syncGraphicsMemoryO1(model, symKey) {
+        if (!model || typeof model.dataSources !== 'function') return null;
+        const mem = getSymMemory(symKey);
+        let mainG = null;
+
+        try {
+            for (const s of model.dataSources()) {
+                const meta = typeof s.metaInfo === 'function' ? s.metaInfo() : s._metaInfo;
+                const title = meta?.description || meta?.name || '';
+                if (!title.includes('Матрёшка')) continue;
+
+                const g = typeof s.graphics === 'function' ? s.graphics() : s._graphics;
+                if (!g) continue;
+                if (title.includes('Зоны интереса')) mainG = g;
+
+                const idxArr = Array.isArray(g._indexes) ? g._indexes : null;
+                const toBar = (x, fb) => {
+                    if (!idxArr || x == null || x < 0 || x >= idxArr.length) return fb;
+                    const v = idxArr[x];
+                    return (v != null && v > -1000000) ? v : fb;
+                };
+
+                const boxes = extractDwgPrimitives(g, 'dwgboxes');
+                const labels = extractDwgPrimitives(g, 'dwglabels');
+                const lines = extractDwgPrimitives(g, 'dwglines');
+
+                let maxActivePineX = 0;
+                for (const b of boxes) {
+                    if (b.t && b.x2 > maxActivePineX) maxActivePineX = b.x2;
+                }
+                const currentRightBar = maxActivePineX > 0 ? toBar(maxActivePineX, 999999) : 999999;
+
+                for (const b of boxes) {
+                    const text = String(b.t ?? '').trim();
+                    if (!text) continue;
+                    const top = Math.max(Number(b.y1 || 0), Number(b.y2 || 0));
+                    const bottom = Math.min(Number(b.y1 || 0), Number(b.y2 || 0));
+                    const barX1 = toBar(Math.min(b.x1, b.x2), -999999);
+                    const barX2 = toBar(Math.max(b.x1, b.x2), 999999);
+                    if (!top || !bottom || barX1 < -100000) continue;
+
+                    if (text === 'Полка') {
+                        const k = `полка_${bottom.toFixed(2)}`;
+                        mem.levels.set(k, { sweptType: 'полка', price: bottom, barX1, lastSeenBar: currentRightBar, rawText: `Полка ${bottom}` });
+                        continue;
+                    }
+
+                    const zInfo = parseZoneLabelText(text, b.c, b.tva);
+                    if (zInfo && !zInfo.isDeadFallback) {
+                        const key = `${barX1}_${bottom.toFixed(2)}_${top.toFixed(2)}`;
+                        mem.zones.set(key, { barX1, barX2, bottom, top, zInfo });
+                    }
+                }
+
+                for (const lb of labels) {
+                    const lInfo = parseLiquidityLabelText(lb.t, lb.y);
+                    if (!lInfo) continue;
+                    const barX = toBar(lb.x, currentRightBar);
+
+                    if (lInfo.isDirectSweepLabel) {
+                        const key = `lq_${barX}_${lInfo.sweptType}`;
+                        mem.lqLabels.set(key, { barX, sweptType: lInfo.sweptType, price: lInfo.price, rawText: lInfo.rawText });
+                    } else {
+                        const matchLine = lines.find(ln => Math.abs(Number(ln.y1 || 0) - lInfo.price) < 0.05);
+                        const birthBar = matchLine ? toBar(Math.min(matchLine.x1, matchLine.x2), barX - 20) : (barX - 20);
+                        const key = `${lInfo.sweptType}_${lInfo.price.toFixed(2)}`;
+                        const prev = mem.levels.get(key);
+                        mem.levels.set(key, {
+                            sweptType: lInfo.sweptType,
+                            price: lInfo.price,
+                            barX1: prev ? Math.min(prev.barX1, birthBar) : birthBar,
+                            lastSeenBar: currentRightBar,
+                            rawText: lInfo.rawText
+                        });
+                    }
+                }
+            }
+        } catch (e) {}
+        return mainG;
+    }
+
+    // --- Аналитическое ядро O(1) через таблицу индексов g._indexes и флаги s.plots() ---
+    function analyzeChartGraphicsO1(g, plotsObj, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars) {
+        const out = { matchedZone: null, matchedSweep: null, detectedStructure: null };
+        if (!g || !entryPrice || !stopPrice) return out;
+
+        const mem = getSymMemory(symKey);
+        const idxArr = Array.isArray(g._indexes) ? g._indexes : null;
+        const toBar = (x, fallback) => {
+            if (!idxArr || x == null || x < 0 || x >= idxArr.length) return fallback;
+            const v = idxArr[x];
+            return (v != null && v > -1000000) ? v : fallback;
+        };
+
+        const boxes = extractDwgPrimitives(g, 'dwgboxes');
+        const labels = extractDwgPrimitives(g, 'dwglabels');
+        const lines = extractDwgPrimitives(g, 'dwglines');
+
+        let maxActivePineX = 0;
+        for (const b of boxes) {
+            if (b.t && b.x2 > maxActivePineX) maxActivePineX = b.x2;
+        }
+        const lastBarFallback = typeof bars?.lastIndex === 'function' ? bars.lastIndex() : 999999;
+        const currentRightBar = maxActivePineX > 0 ? toBar(maxActivePineX, lastBarFallback) : lastBarFallback;
+
+        // 1. Сбор событий СТРУКТУРЫ (из dwglines, dwgboxes и флага ложного пробоя pr[7] в s.plots())
+        const structByBar = new Map();
+        for (const l of lines) {
+            const bx1 = toBar(Math.min(l.x1, l.x2), -999999);
+            const bx2 = toBar(Math.max(l.x1, l.x2), 999999);
+            if (bx2 >= currentRightBar || (bx1 > -100000 && bx2 - bx1 > 120)) continue;
+
+            if (l.w === 1 && (l.st === 'sol' || l.st === 'dsh') && (l.ci === 4282726130 || l.ci === 4286683400)) {
+                const dir = l.ci === 4282726130 ? '↓' : '↑';
+                const type = l.st === 'sol' ? 'пробой' : 'слом';
+                structByBar.set(bx2, { barX2: bx2, type, dir, inner: false });
+            } else if (l.w === 1 && l.st === 'dot' && (l.ci === 2353346290 || l.ci === 2357303560)) {
+                const dir = l.ci === 2353346290 ? '↓' : '↑';
+                structByBar.set(bx2, { barX2: bx2, type: 'слом', dir, inner: true });
+            }
+        }
+        for (const b of boxes) {
+            const text = String(b.t ?? '').trim().toLowerCase();
+            if (!text.includes('слом') && !text.includes('пробой')) continue;
+            const bx2 = toBar(Math.max(b.x1, b.x2), 999999);
+            if (bx2 >= 999999) continue;
+            const dir = text.includes('↓') ? '↓' : '↑';
+            const type = text.includes('слом') ? 'слом' : 'пробой';
+            const isInner = b.ts === 'tiny' || text.includes('внутр');
+            if (!structByBar.has(bx2)) {
+                structByBar.set(bx2, { barX2: bx2, type, dir, inner: isInner });
+            } else if (isInner) {
+                structByBar.get(bx2).inner = true;
+            }
+        }
+
+        const tradeDirArrow = isLong ? '↑' : '↓';
+        const pastStruct = Array.from(structByBar.values())
+            .filter(e => {
+                if (triggerIdx == null) return true;
+                if (e.barX2 <= triggerIdx) return true;
+                return e.barX2 === triggerIdx + 1 && !e.inner && e.type === 'пробой' && e.dir === tradeDirArrow;
+            })
+            .sort((a, b) => a.barX2 - b.barX2);
+
+        if (pastStruct.length > 0) {
+            const lastEv = pastStruct[pastStruct.length - 1];
+            if (lastEv.inner && (triggerIdx == null || triggerIdx - lastEv.barX2 <= 6)) {
+                out.detectedStructure = `внутр. слом ${lastEv.dir}`;
+            } else {
+                const major = pastStruct.filter(e => !e.inner);
+                if (major.length > 0) {
+                    const mLast = major[major.length - 1];
+                    if (mLast.type === 'слом') {
+                        const oppDir = mLast.dir === '↑' ? '↓' : '↑';
+                        let hadFakeout = false;
+                        if (plotsObj && mLast.barX2 != null) {
+                            for (let bi = mLast.barX2 - 8; bi <= mLast.barX2; bi++) {
+                                const pr = getPlotRow(plotsObj, bi);
+                                if (pr && pr[7] === 1) { hadFakeout = true; break; }
+                            }
+                        }
+                        let cntOpp = 0;
+                        for (let i = major.length - 2; i >= 0; i--) {
+                            if (major[i].type === 'пробой' && major[i].dir === oppDir) cntOpp++;
+                            else break;
+                        }
+                        if (hadFakeout) {
+                            out.detectedStructure = `ложный пробой ${oppDir} · слом ${mLast.dir}`;
+                        } else if (cntOpp >= 2) {
+                            out.detectedStructure = `пробой ${oppDir} · пробой ${oppDir} · слом ${mLast.dir}`;
+                        } else {
+                            out.detectedStructure = `слом ${mLast.dir}`;
+                        }
+                    } else {
+                        const sameDir = mLast.dir;
+                        let cntSame = 0;
+                        for (let i = major.length - 1; i >= 0; i--) {
+                            if (major[i].type === 'пробой' && major[i].dir === sameDir) cntSame++;
+                            else break;
+                        }
+                        out.detectedStructure = cntSame >= 2
+                            ? `пробой ${sameDir} · пробой ${sameDir}`
+                            : `пробой ${sameDir}`;
+                    }
+                }
+            }
+        }
+
+        // 2. Поиск ЗОНЫ ИНТЕРЕСА от точки входа (entryPrice)
+        const tradeLow = Math.min(entryPrice, stopPrice);
+        const tradeHigh = Math.max(entryPrice, stopPrice);
+        const minP = Math.min(tradeLow, entryExtreme !== '' ? Number(entryExtreme) : tradeLow);
+        const maxP = Math.max(tradeHigh, entryExtreme !== '' ? Number(entryExtreme) : tradeHigh);
+        const tol = Math.max(0.08, Math.abs(entryPrice - stopPrice) * 0.08);
+
+        const zoneCandidates = [];
+        for (const b of boxes) {
+            const top = Math.max(Number(b.y1 || 0), Number(b.y2 || 0));
+            const bottom = Math.min(Number(b.y1 || 0), Number(b.y2 || 0));
+            if (!top || !bottom) continue;
+
+            const barX1 = toBar(Math.min(b.x1, b.x2), -999999);
+            const barX2 = toBar(Math.max(b.x1, b.x2), 999999);
+
+            const memKey = `${barX1}_${bottom.toFixed(2)}_${top.toFixed(2)}`;
+            const zInfo = (!b.t && mem.zones.has(memKey))
+                ? mem.zones.get(memKey).zInfo
+                : parseZoneLabelText(b.t, b.c, b.tva);
+            if (!zInfo) continue;
+
+            const isDead2Bar = zInfo.isDeadFallback && (barX2 - barX1 <= 3);
+
+            if (triggerIdx != null) {
+                if (barX1 > triggerIdx + 1) continue;
+                if (!isDead2Bar && barX2 < triggerIdx - 1) continue;
+                if (isDead2Bar && barX1 > -100000 && triggerIdx - barX1 > 120) continue;
+            }
+
+            const entryInside = (entryPrice >= bottom - tol && entryPrice <= top + tol);
+            const extremeInside = (entryExtreme !== '' && Number(entryExtreme) >= bottom - tol && Number(entryExtreme) <= top + tol);
+            const overlapHeight = Math.min(tradeHigh, top) - Math.max(tradeLow, bottom);
+
+            if (!entryInside && !extremeInside && overlapHeight <= 0) continue;
+
+            const sideMatch = (zInfo.side === (isLong ? 'LONG' : 'SHORT')) || (zInfo.side === 'ANY' && !zInfo.isProtor);
+            let rank = 30;
+            if (zInfo.isProtor) {
+                rank = entryInside ? 40 : 50;
+            } else if (sideMatch && entryInside) {
+                rank = 0;
+            } else if (sideMatch && extremeInside) {
+                rank = 5;
+            } else if (sideMatch) {
+                rank = 12;
+            } else if (entryInside) {
+                rank = 20;
+            }
+            if (zInfo.isDeadFallback) rank += 4;
+
+            const entryDist = entryPrice < bottom ? (bottom - entryPrice) : (entryPrice > top ? (entryPrice - top) : 0);
+            const barDist = (triggerIdx != null && barX1 > -100000) ? Math.abs(triggerIdx - barX1) : 500;
+            zoneCandidates.push({ rank, entryDist, barDist, top, bottom, barX1, zInfo });
+        }
+
+        if (zoneCandidates.length > 0) {
+            zoneCandidates.sort((a, b) => (a.rank - b.rank) || (a.entryDist - b.entryDist) || (a.barDist - b.barDist));
+            const best = zoneCandidates[0];
+            const touchAtEntry = (triggerIdx != null && triggerIdx < currentRightBar - 2)
+                ? computeTouchAtEntryBar(bars, best.barX1, triggerIdx, best.bottom, best.top, best.zInfo.maxTouchNum)
+                : best.zInfo.touch;
+
+            out.matchedZone = {
+                zoneType: best.zInfo.zoneType,
+                fuel: best.zInfo.fuel,
+                touch: touchAtEntry,
+                against: best.zInfo.against,
+                rawText: best.zInfo.rawText
+            };
+        } else {
+            const htfMatches = [];
+            for (const lb of labels) {
+                const z05 = parseZoneLabelText(lb.t);
+                if (!z05 || !z05.htfRank) continue;
+                const midY = Number(lb.y || 0);
+                if (midY >= minP - tol && midY <= maxP + tol) {
+                    htfMatches.push({
+                        htfRank: z05.htfRank,
+                        midDist: Math.abs(entryPrice - midY),
+                        z05
+                    });
+                }
+            }
+            if (htfMatches.length > 0) {
+                htfMatches.sort((a, b) => (b.htfRank - a.htfRank) || (a.midDist - b.midDist));
+                const bestHtf = htfMatches[0].z05;
+                out.matchedZone = {
+                    zoneType: bestHtf.zoneType,
+                    fuel: bestHtf.fuel,
+                    touch: '1',
+                    against: bestHtf.against,
+                    rawText: bestHtf.rawText
+                };
+            }
+        }
+
+        // 3. Поиск СНЯТОЙ ЛИКВИДНОСТИ перед входом
+        let sweepHigh = maxP;
+        let sweepLow = minP;
+        if (bars && triggerIdx != null) {
+            for (let i = triggerIdx - 5; i <= triggerIdx; i++) {
+                const b = getPlotRow(bars, i);
+                if (!b) continue;
+                const hi = Number(b[2]), lo = Number(b[3]);
+                if (!isNaN(hi)) sweepHigh = Math.max(sweepHigh, hi);
+                if (!isNaN(lo)) sweepLow = Math.min(sweepLow, lo);
+            }
+        }
+
+        const sweepCandidates = [];
+
+        for (const lqItem of mem.lqLabels.values()) {
+            if (triggerIdx != null && (lqItem.barX < triggerIdx - 5 || lqItem.barX > triggerIdx + 1)) continue;
+            const barDiff = triggerIdx != null ? Math.abs(triggerIdx - lqItem.barX) : 0;
+            const swPrice = Number(entryExtreme !== '' ? entryExtreme : lqItem.price);
+            sweepCandidates.push({ priority: 0, barDiff, priceDiff: 0, sType: lqItem.sweptType, price: swPrice, rawText: lqItem.rawText });
+        }
+
+        for (const l of lines) {
+            const ly = Number(l.y1 ?? 0);
+            if (!ly || Math.abs(ly - Number(l.y2 ?? 0)) > 0.001) continue;
+
+            const isSweptBait = l.st === 'dot' && l.w === 1 && (l.ci === 1505670578 || l.ci === 1027311288 || l.ci === 3426453176);
+            const isSweptShelf = l.st === 'dot' && l.w === 2 && (l.ci === 1497708274 || l.ci === 1501665544);
+            if (!isSweptBait && !isSweptShelf) continue;
+
+            const barX1 = toBar(Math.min(l.x1, l.x2), -999999);
+            const barX2 = toBar(Math.max(l.x1, l.x2), 999999);
+            if (barX2 >= currentRightBar) continue;
+
+            if (triggerIdx != null) {
+                if (barX1 >= triggerIdx) continue;
+                if (barX2 < triggerIdx - 6 || barX2 > triggerIdx + 1) continue;
+            }
+
+            const inPriceRange = isLong
+                ? (ly >= sweepLow - tol && ly <= entryPrice + tol)
+                : (ly <= sweepHigh + tol && ly >= entryPrice - tol);
+            if (!inPriceRange) continue;
+
+            const sType = isSweptShelf ? 'полка' : 'приманка';
+            const barDiff = triggerIdx != null ? Math.abs(triggerIdx - barX2) : 0;
+            const priceDiff = Math.abs(Number(entryExtreme !== '' ? entryExtreme : entryPrice) - ly);
+            sweepCandidates.push({ priority: 1, barDiff, priceDiff, sType, price: ly, rawText: `${sType} ${ly}` });
+        }
+
+        for (const lvl of mem.levels.values()) {
+            if (triggerIdx != null && lvl.barX1 >= triggerIdx) continue;
+            if (lvl.lastSeenBar >= currentRightBar) continue;
+
+            const inPriceRange = isLong
+                ? (lvl.price >= sweepLow - tol && lvl.price <= entryPrice + tol)
+                : (lvl.price <= sweepHigh + tol && lvl.price >= entryPrice - tol);
+            if (!inPriceRange) continue;
+
+            const barDiff = triggerIdx != null ? Math.abs(triggerIdx - lvl.lastSeenBar) : 2;
+            if (barDiff > 8) continue;
+            const priceDiff = Math.abs(Number(entryExtreme !== '' ? entryExtreme : entryPrice) - lvl.price);
+            sweepCandidates.push({ priority: 1, barDiff, priceDiff, sType: lvl.sweptType, price: lvl.price, rawText: lvl.rawText });
+        }
+
+        if (plotsObj && triggerIdx != null && sweepCandidates.length === 0) {
+            for (let bi = triggerIdx; bi >= triggerIdx - 4; bi--) {
+                const pr = getPlotRow(plotsObj, bi);
+                if (!pr) continue;
+                const sweptHtf = isLong ? (pr[15] === 1) : (pr[14] === 1);
+                const swept15m = (pr[18] === 1);
+                if (sweptHtf || swept15m) {
+                    const sType = sweptHtf ? 'уровень 1Ч' : 'уровень 15м';
+                    const swPrice = Number(entryExtreme !== '' ? entryExtreme : entryPrice);
+                    sweepCandidates.push({ priority: 2, barDiff: triggerIdx - bi, priceDiff: 0, sType, price: swPrice, rawText: `${sType} ${swPrice}` });
+                    break;
+                }
+            }
+        }
+
+        if (sweepCandidates.length > 0) {
+            sweepCandidates.sort((a, b) => (a.priority - b.priority) || (a.barDiff - b.barDiff) || (a.priceDiff - b.priceDiff));
+            const bestSw = sweepCandidates[0];
+            out.matchedSweep = {
+                sweptType: bestSw.sType,
+                price: Number(bestSw.price),
+                rawText: bestSw.rawText
+            };
+        }
+
+        return out;
+    }
+
+    function readMatryoshkaIndicators(model, symKey, entryTime, triggerIdx, startIdx, isLong, entryPrice, stopPrice, entryExtreme, bars) {
+        const result = { flows: null, candleColor: null, matchedZone: null, matchedSweep: null, detectedStructure: null };
         if (!model || typeof model.dataSources !== 'function') return result;
 
         try {
+            syncGraphicsMemoryO1(model, symKey);
             const sources = model.dataSources();
             for (const s of sources) {
                 const meta = typeof s.metaInfo === 'function' ? s.metaInfo() : s._metaInfo;
@@ -336,11 +889,11 @@
 
                 if (title.includes('Матрёшка Зоны интереса')) {
                     const g = typeof s.graphics === 'function' ? s.graphics() : s._graphics;
-                    const tcContainer = g?.dwgtablecells?.()?.get('tableCells');
-                    const cellMap = tcContainer?._primitivesDataById || tcContainer;
-                    if (cellMap instanceof Map) {
+                    const plotsObj = typeof s.plots === 'function' ? s.plots() : s._data?.bars?.();
+                    const tcCells = extractDwgPrimitives(g, 'dwgtablecells');
+                    if (tcCells.length > 0) {
                         const rowsByTid = {};
-                        for (const cell of cellMap.values()) {
+                        for (const cell of tcCells) {
                             if (!cell || cell.tid == null) continue;
                             const key = `${cell.tid}_${cell.row}`;
                             if (!rowsByTid[key]) rowsByTid[key] = {};
@@ -352,16 +905,23 @@
                             const sym = rObj[1];
                             if (!label || !sym) continue;
                             const dirWord = sym === '↑' ? 'вверх' : (sym === '↓' ? 'вниз' : '—');
-                            if (label === 'Д') flows.d = dirWord;
-                            else if (label === '4Ч') flows.h4 = dirWord;
-                            else if (label === '1Ч') flows.h1 = dirWord;
-                            else if (label === '15м') flows.m15 = dirWord;
+                            if (label === 'Д' || label === 'D1') flows.d = dirWord;
+                            else if (label === '4Ч' || label === 'H4') flows.h4 = dirWord;
+                            else if (label === '1Ч' || label === 'H1') flows.h1 = dirWord;
+                            else if (label === '15м' || label === 'M15') flows.m15 = dirWord;
                         }
                         if (Object.keys(flows).length > 0) result.flows = flows;
                     }
+
+                    if (g && entryPrice && stopPrice) {
+                        const direct = analyzeChartGraphicsO1(g, plotsObj, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars);
+                        result.matchedZone = direct.matchedZone;
+                        result.matchedSweep = direct.matchedSweep;
+                        result.detectedStructure = direct.detectedStructure;
+                    }
                 }
 
-                if (title.includes('Матрёшка Модели входа')) {
+                if (!result.candleColor && title.includes('Матрёшка Модели входа')) {
                     const plots = typeof s.plots === 'function' ? s.plots() : s._data?.bars?.();
                     const foundBar = findPlotRowByIndexOrTime(plots, entryTime, triggerIdx);
                     if (foundBar && plots) {
@@ -431,8 +991,20 @@
     }
 
     function readWatched(val) {
-        if (val != null && typeof val === 'object' && typeof val.value === 'function') return val.value();
+        try {
+            if (val != null && typeof val === 'object' && typeof val.value === 'function') return val.value();
+        } catch (e) {}
         return val;
+    }
+
+    function getChartTimezone(model) {
+        try {
+            const props = typeof model?.properties === 'function' ? model.properties() : model?._properties;
+            const tzObj = props?.timezone || props?.childs?.()?.timezone;
+            const tz = readWatched(tzObj);
+            if (typeof tz === 'string' && tz.includes('/')) return tz;
+        } catch (e) {}
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
     }
 
     function detectCurrentlySelectedToolId(model) {
@@ -472,22 +1044,26 @@
         return utcH + (dateObj.getUTCMinutes() / 60);
     }
 
+    // Точные границы сессий по МСК (UTC+3):
+    // 00:00 – 08:59 -> Азия
+    // 09:00 – 15:29 (14:59 для Лондона) -> Европа / Лондон
+    // 15:30 (15:00 для Нью-Йорка) – 23:59 -> Америка / Нью-Йорк
     function detectSession(timestamp) {
         if (!timestamp) return { std: 'Лондон', eu_us: 'Европа' };
         const d = new Date(timestamp * 1000);
         const mskH = getMskHourDecimal(d);
 
         let std = 'Азия';
-        if (mskH >= 15.0 && mskH < 23.0) {
+        if (mskH >= 15.0) {
             std = 'Нью-Йорк';
-        } else if (mskH >= 8.0 && mskH < 15.0) {
+        } else if (mskH >= 9.0) {
             std = 'Лондон';
         }
 
         let eu_us = 'Азия';
-        if (mskH >= 15.5 && mskH < 23.0) {
+        if (mskH >= 15.5) {
             eu_us = 'Америка';
-        } else if (mskH >= 8.0 && mskH < 15.5) {
+        } else if (mskH >= 9.0) {
             eu_us = 'Европа';
         }
 
@@ -501,26 +1077,33 @@
         return `${h}:${m}`;
     }
 
-    function formatHalfHourSlot(timestamp) {
-        const [h, m] = formatMskTime(timestamp).split(':').map(Number);
-        const slotM = m >= 30 ? '30' : '00';
-        const slotH = String(Math.max(7, Math.min(23, h || 10))).padStart(2, '0');
-        return `${slotH}:${slotM}`;
-    }
-
-    function formatDate(timestamp) {
+    function formatLocalTime(timestamp, chartTz) {
         const d = new Date(timestamp * 1000);
         try {
             return new Intl.DateTimeFormat('ru-RU', {
-                timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric'
+                timeZone: chartTz || undefined,
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).format(d);
+        } catch (e) {
+            return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+    }
+
+    function formatDate(timestamp, timeZone = 'Europe/Moscow') {
+        const d = new Date(timestamp * 1000);
+        try {
+            return new Intl.DateTimeFormat('ru-RU', {
+                timeZone, day: '2-digit', month: '2-digit', year: 'numeric'
             }).format(d);
         } catch (e) {
             return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
         }
     }
 
-    function formatShortDate(timestamp) {
-        return formatDate(timestamp).slice(0, 5);
+    function formatShortDate(timestamp, timeZone = 'Europe/Moscow') {
+        return formatDate(timestamp, timeZone).slice(0, 5);
     }
 
     function formatTf(rawInterval, style) {
@@ -548,9 +1131,6 @@
     }
 
     function resolveBarTimestamp(model, bars, barIdx, tool, points) {
-        const pt0 = tool?._points?.[0] || points?.[0];
-        const rawPtTime = normalizeUnixSeconds(pt0?.time_t || pt0?.time?.getTime?.() || pt0?.time);
-
         const row = getPlotRow(bars, barIdx);
         if (row) {
             const rt = normalizeUnixSeconds(row[0]);
@@ -565,7 +1145,10 @@
             }
         } catch (e) {}
 
+        const pt0 = tool?._points?.[0] || points?.[0];
+        const rawPtTime = normalizeUnixSeconds(pt0?.time_t || pt0?.time?.getTime?.() || pt0?.time);
         if (rawPtTime) return rawPtTime;
+
         return Math.floor(Date.now() / 1000);
     }
 
@@ -581,7 +1164,7 @@
         const from = Math.min(startIndex, endIndex ?? startIndex);
         const to = Math.max(startIndex, endIndex ?? startIndex);
 
-        let triggerIdx = from;
+        let triggerIdx = null;
         for (let i = from; i <= to; i++) {
             const b = getPlotRow(bars, i);
             if (!b) continue;
@@ -591,6 +1174,18 @@
                 break;
             }
         }
+        if (triggerIdx === null) {
+            for (let i = from - 1; i >= from - 3; i--) {
+                const b = getPlotRow(bars, i);
+                if (!b) continue;
+                const hi = Number(b[2]), lo = Number(b[3]);
+                if (!isNaN(hi) && !isNaN(lo) && lo <= entryPrice && hi >= entryPrice) {
+                    triggerIdx = i;
+                    break;
+                }
+            }
+        }
+        if (triggerIdx === null) triggerIdx = from;
 
         let sweepExtreme = null;
         for (let i = triggerIdx - 2; i <= triggerIdx; i++) {
@@ -643,9 +1238,28 @@
     }
 
     function parseSingleTool(tool, model, ms, bars, symInfo, priceStep) {
-        const rawProps = typeof tool.properties === 'function' ? tool.properties() : tool.properties;
-        const props = (rawProps && typeof rawProps.state === 'function') ? rawProps.state() : rawProps;
-        const points = typeof tool.points === 'function' ? tool.points() : (tool._points || tool.points || []);
+        const rawProps = typeof tool.properties === 'function' ? tool.properties() : (tool.properties || tool._properties);
+        let props = rawProps;
+        try {
+            if (rawProps && typeof rawProps.state === 'function') props = rawProps.state();
+        } catch (e) {}
+
+        const getPropVal = (key) => {
+            const v1 = readWatched(props?.[key]);
+            if (v1 != null) return v1;
+            const v2 = readWatched(rawProps?.[key]);
+            if (v2 != null) return v2;
+            const ch = typeof rawProps?.childs === 'function' ? rawProps.childs() : rawProps?._childs;
+            return readWatched(ch?.[key]);
+        };
+
+        let points = [];
+        try {
+            const rawPts = typeof tool.points === 'function' ? tool.points() : (tool._points || tool.points || []);
+            if (Array.isArray(rawPts)) points = rawPts;
+        } catch (e) {
+            points = Array.isArray(tool._points) ? tool._points : [];
+        }
 
         const toolNameStr = getToolName(tool);
         const isRect = toolNameStr.includes('Rectangle');
@@ -664,8 +1278,8 @@
             stop = Math.min(p0, p1);
             target = entry;
         } else {
-            const stopLevel = Number(readWatched(props?.stopLevel) ?? readWatched(rawProps?.stopLevel) ?? 0);
-            const profitLevel = Number(readWatched(props?.profitLevel) ?? readWatched(rawProps?.profitLevel) ?? 0);
+            const stopLevel = Number(getPropVal('stopLevel') ?? 0);
+            const profitLevel = Number(getPropVal('profitLevel') ?? 0);
             stop = isLong ? entry - (stopLevel * priceStep) : entry + (stopLevel * priceStep);
             target = isLong ? entry + (profitLevel * priceStep) : entry - (profitLevel * priceStep);
             rrNum = (stopLevel > 0) ? (profitLevel / stopLevel) : 0;
@@ -673,24 +1287,30 @@
         }
 
         const effectiveIdx = barAnalysis.triggerIdx ?? startIdx;
-        const time = resolveBarTimestamp(model, bars, effectiveIdx ?? startIdx, tool, points);
+        const time = resolveBarTimestamp(model, bars, effectiveIdx, tool, points);
+        const chartTz = getChartTimezone(model);
 
-        const rawSymbol = readWatched(props?.symbol) || symInfo.name || 'XAUUSD';
+        const rawSymbol = getPropVal('symbol') || symInfo.name || 'XAUUSD';
         const cleanSymbol = String(rawSymbol).split(':').pop();
-        const rawInterval = readWatched(props?.interval) || '15';
+        const rawInterval = getPropVal('interval') || (typeof ms?.interval === 'function' ? ms.interval() : '15');
+        const symKey = `${cleanSymbol}_${rawInterval}`;
 
         const decimals = symInfo.pricescale
             ? Math.max(0, Math.round(Math.log10(symInfo.pricescale)))
-            : (priceStep < 1 ? Math.min(8, priceStep.toFixed(8).replace(/0+$/, '').split('.')[1]?.length || 2) : 2);
+            : (priceStep < 1 ? Math.min(8, Number(priceStep).toFixed(8).replace(/0+$/, '').split('.')[1]?.length || 2) : 2);
 
         const entryR = Number(entry.toFixed(decimals));
         const stopR = Number(stop.toFixed(decimals));
         const targetR = Number(target.toFixed(decimals));
-        const extremeR = barAnalysis.entryCandleExtreme != null ? Number(barAnalysis.entryCandleExtreme.toFixed(decimals)) : '';
+        const extremeR = barAnalysis.entryCandleExtreme != null ? Number(Number(barAnalysis.entryCandleExtreme).toFixed(decimals)) : '';
         const sess = detectSession(time);
         const id = getToolId(tool);
 
-        const ind = readMatryoshkaIndicators(model, time, effectiveIdx, isLong);
+        const ind = readMatryoshkaIndicators(model, symKey, time, effectiveIdx, startIdx, isLong, entryR, stopR, extremeR, bars);
+        if (ind.matchedSweep && ind.matchedSweep.price != null && !isNaN(Number(ind.matchedSweep.price))) {
+            ind.matchedSweep.price = Number(Number(ind.matchedSweep.price).toFixed(decimals));
+        }
+
         const signature = `${id}_${startIdx}_${endIdx}_${entryR}_${stopR}_${targetR}_${extremeR}`;
 
         return {
@@ -711,10 +1331,12 @@
             riskPts: Number(Math.abs(entryR - stopR).toFixed(decimals)),
             potPts: Number(Math.abs(targetR - entryR).toFixed(decimals)),
             riskReward: Number(rrNum.toFixed(2)),
-            candleDate: formatDate(time),
-            shortDate: formatShortDate(time),
+            candleDateMsk: formatDate(time, 'Europe/Moscow'),
+            candleDateLocal: formatDate(time, chartTz),
+            shortDateMsk: formatShortDate(time, 'Europe/Moscow'),
+            shortDateLocal: formatShortDate(time, chartTz),
             mskTime: formatMskTime(time),
-            officeTimeSlot: formatHalfHourSlot(time),
+            localTime: formatLocalTime(time, chartTz),
             sessionStd: sess.std,
             sessionEuUs: sess.eu_us,
             autoResult: barAnalysis.outcome,
@@ -733,7 +1355,7 @@
             }
 
             const ms = typeof model.mainSeries === 'function' ? model.mainSeries() : model.mainSeries;
-            const bars = typeof ms.bars === 'function' ? ms.bars() : ms.bars;
+            const bars = typeof ms?.bars === 'function' ? ms.bars() : ms?.bars;
             const tools = typeof model.allLineTools === 'function' ? model.allLineTools() : model.allLineTools;
             const list = Array.isArray(tools) ? tools : Object.values(tools || {});
 
@@ -745,13 +1367,27 @@
 
             let symInfo = {};
             try {
-                symInfo = (typeof ms.symbolInfo === 'function' ? ms.symbolInfo() : ms._symbolInfo) || {};
+                symInfo = (typeof ms?.symbolInfo === 'function' ? ms.symbolInfo() : ms?._symbolInfo) || {};
             } catch (e) {}
 
-            const priceStep = (typeof ms.priceStep === 'function' ? ms.priceStep() : ms.priceStep) ||
-                              (symInfo.minmov && symInfo.pricescale ? symInfo.minmov / symInfo.pricescale : 0.01);
+            const rawStep = typeof ms?.priceStep === 'function' ? ms.priceStep() : ms?.priceStep;
+            const priceStep = (typeof rawStep === 'number' && !isNaN(rawStep) && rawStep > 0)
+                ? rawStep
+                : (symInfo.minmov && symInfo.pricescale ? symInfo.minmov / symInfo.pricescale : 0.01);
 
-            const parsed = matchingTools.map(t => parseSingleTool(t, model, ms, bars, symInfo, priceStep));
+            const parsed = [];
+            for (const t of matchingTools) {
+                try {
+                    parsed.push(parseSingleTool(t, model, ms, bars, symInfo, priceStep));
+                } catch (toolErr) {
+                    console.warn('[Matryoshka Logger] Ошибка разбора инструмента:', toolErr);
+                }
+            }
+            if (!parsed.length) {
+                if (!silent) showToast('Не удалось прочитать координаты позиции на графике', 'error');
+                return false;
+            }
+
             parsed.sort((a, b) => a.time - b.time);
             allChartTrades = parsed;
 
@@ -795,6 +1431,7 @@
 
             return true;
         } catch (e) {
+            console.error('[Matryoshka Logger]', e);
             if (!silent) showToast('Не удалось прочитать инструмент на графике', 'error');
             return false;
         }
@@ -1027,9 +1664,9 @@
         <div id="bt-trade-card" style="background:#141418; border:1px solid #26262e; border-radius:8px; padding:8px 10px; margin-bottom:9px; transition:border-color 0.2s ease;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; margin-bottom:6px; white-space:nowrap;">
                 <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; min-width:0; overflow:hidden;">
-                    <b id="bt-info-sym" style="color:#ffffff; white-space:nowrap;">XAUUSD · M5</b>
+                    <b id="bt-info-sym" style="color:#ffffff; white-space:nowrap;">XAUUSD · M1</b>
                     <button type="button" id="bt-session-pill" title="Торговая сессия по времени входа. Нажмите, чтобы изменить" style="background:rgba(229,193,88,0.14); color:#f3d26b; border:1px solid rgba(229,193,88,0.4); border-radius:4px; padding:1px 6px; font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap;">⚡ Европа</button>
-                    <span id="bt-info-date" style="color:#9ca3af; font-size:10.5px; white-space:nowrap;"></span>
+                    <button type="button" id="bt-info-date" title="Время свечи фактического входа. Нажмите для переключения МСК (UTC+3) / пояса графика" style="background:transparent; border:1px solid transparent; border-radius:4px; color:#9ca3af; font-size:10.5px; padding:1px 4px; cursor:pointer; white-space:nowrap; transition:0.12s;"></button>
                 </div>
                 <span id="bt-info-badge" style="background:#089981; color:#fff; font-size:10.5px; padding:2px 7px; border-radius:4px; font-weight:700; white-space:nowrap; flex-shrink:0;"></span>
             </div>
@@ -1069,7 +1706,7 @@
                 </div>
 
                 <div id="bt-cols-editor-wrap" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid #26262e;">
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:7px;">
+                    <div id="bt-custom-anchors-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:7px;">
                         <div>
                             <div class="bt-lbl">ПЕРВЫЙ СТОЛБЕЦ ВСТАВКИ</div>
                             <select id="bt-custom-paste-col" class="bt-sel" style="margin-bottom:0; height:26px;">
@@ -1079,8 +1716,8 @@
                                 <option value="D">Столбец D</option>
                             </select>
                         </div>
-                        <div>
-                            <div class="bt-lbl">ПЕРВАЯ СТРОКА ДАННЫХ</div>
+                        <div id="bt-start-row-box">
+                            <div class="bt-lbl" title="Нужна только для формул Накопительного R и Просадки ($P$6)">СТРОКА НАЧАЛА СЧЁТА R</div>
                             <input type="number" id="bt-custom-start-row" min="1" max="500" value="${getActiveStartRow()}" style="width:100%; height:26px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; border-radius:5px; padding:0 6px; font-size:11px; outline:none;">
                         </div>
                     </div>
@@ -1269,6 +1906,7 @@
         .bt-del-col { color:#f23645; font-weight:bold; cursor:pointer; padding:0 2px; font-size:11px; }
         .bt-cm-item:hover, .bt-cc-item:hover, .bt-fix-action:hover { background:rgba(229,193,88,0.18) !important; border-color:#e5c158 !important; color:#f3d26b !important; }
         #bt-cc-btn:hover { border-color:#52525b; }
+        #bt-info-date:hover { border-color:#3a3a48; color:#f3d26b !important; background:#1c1c24 !important; }
         #bt-quick-copy-prices:hover { border-color:rgba(229,193,88,0.55); }
         .bt-prev-cell { background:#16161c; border:1px solid #262630; border-radius:4px; padding:2px 6px; flex-shrink:0; display:flex; flex-direction:column; min-width:48px; max-width:130px; }
         .bt-prev-cell.is-first { border-color:rgba(229,193,88,0.55); background:rgba(229,193,88,0.08); }
@@ -1289,6 +1927,7 @@
     const mainBtnText = document.getElementById('bt-main-btn-text');
     const screenPillBtn = document.getElementById('bt-screen-pill');
     const sessionPillBtn = document.getElementById('bt-session-pill');
+    const dateBtnEl = document.getElementById('bt-info-date');
     const commentInpEl = document.getElementById('bt-inp-comment');
     const commentMenuEl = document.getElementById('bt-comment-menu');
     const rowPreviewEl = document.getElementById('bt-row-preview');
@@ -1525,8 +2164,10 @@
         const t = currentTrade;
         const isLong = t.direction === 'LONG';
         const hasRes30 = cols.includes('res_30');
+        const hasResOff = cols.includes('res_off');
 
-        const resStd = getChipVal('f-res', t.autoResult);
+        const defOffRes = t.autoResult === 'Безубыток' ? 'Сейф/БУ' : t.autoResult;
+        const resStd = getChipVal('f-res', hasResOff ? defOffRes : t.autoResult);
         const res30Val = getChipVal('f-res30', t.autoResult === 'Тейк' ? 'цель' : (t.autoResult === 'Стоп' ? 'стоп' : 'безубыток'));
         const activeResult = hasRes30 ? res30Val : resStd;
 
@@ -1547,7 +2188,7 @@
         } else if (activeResult === 'Стоп' || activeResult === 'стоп') {
             rOut = -1;
             newCum = Number((baseCumR - 1).toFixed(2));
-        } else if (activeResult === 'Безубыток' || activeResult === 'безубыток') {
+        } else if (activeResult === 'Безубыток' || activeResult === 'безубыток' || activeResult === 'Бу' || activeResult === 'Сейф/БУ') {
             rOut = 0;
         } else if (!isNaN(manualRNum)) {
             rOut = manualRNum;
@@ -1565,21 +2206,22 @@
         const fl1H = getFlowVal('f-fl-1h', state.flow1H);
         const fl15M = getFlowVal('f-fl-15m', state.flow15M);
 
-        const f1 = getChipVal('f-f1', 'да'), f2 = getChipVal('f-f2', 'да'), f3 = getChipVal('f-f3', 'нет'), f4 = getChipVal('f-f4', 'да');
         const matchDir = (fl) => fl === 'вверх' ? (isLong ? 'да' : 'нет') : (fl === 'вниз' ? (!isLong ? 'да' : 'нет') : 'нет');
         const tfD1 = getChipVal('f-tf-d1', matchDir(flD));
         const tfH4 = getChipVal('f-tf-h4', matchDir(fl4H));
         const tfH1 = getChipVal('f-tf-h1', matchDir(fl1H));
         const tfM15 = getChipVal('f-tf-m15', matchDir(fl15M));
         const tfOk = getChipVal('f-tf-ok', 'да');
-        const emotionVal = document.getElementById('f-emotion')?.value || 'Спокоен';
+        const emotionVal = document.getElementById('f-emotion')?.value || state.emotion || 'Спокоен';
+
+        const f1 = getChipVal('f-f1', 'да'), f2 = getChipVal('f-f2', 'да'), f3 = getChipVal('f-f3', 'нет'), f4 = getChipVal('f-f4', 'да');
         const factorsCnt = [f1, f2, f3, f4].filter(x => x === 'да').length;
 
         const stopUsd = Math.max(0.01, t.riskPts);
         const lots30 = Math.floor((30 / stopUsd / 100) * 100) / 100;
         const profitUsd = rOut === '' ? '' : Number((Number(rOut) * lots30 * 100 * stopUsd).toFixed(2));
-        const lotsOff = Number(((10000 * 0.003) / (stopUsd / 0.01 * 1)).toFixed(2));
-        const rOutOff = resStd === 'Стоп' ? -1 : (resStd === 'Тейк' ? Number((0.5 * 3 + 0.5 * t.riskReward).toFixed(2)) : 0);
+        const lotsOff = Number(((10000 * 0.003) / (stopUsd * 100)).toFixed(2));
+        const rOutOff = resStd === 'Стоп' ? -1 : (resStd === 'Тейк' ? Number((0.5 * 3 + 0.5 * t.riskReward).toFixed(2)) : (resStd === 'Сейф/БУ' ? 1.5 : 0));
 
         const comment = cleanText(commentInpEl?.value || '');
         const chk30 = getChipVal('f-check30', 'да');
@@ -1587,13 +2229,15 @@
         const sweptVal = document.getElementById('f-swept')?.value || 'приманка';
         const sweptLvlRaw = cleanText(document.getElementById('f-swept-lvl')?.value || '').replace(',', '.');
 
+        const useLocal = state.timeMode === 'local';
+
         return {
             tradeId: t.id,
             signature: t.signature,
             symbol: t.symbol,
-            candleDate: t.candleDate,
+            candleDate: useLocal ? t.candleDateLocal : t.candleDateMsk,
             mskTime: t.mskTime,
-            officeTimeSlot: t.officeTimeSlot,
+            officeTimeSlot: useLocal ? t.localTime : t.mskTime,
             session: getActiveSession(),
             isLong,
             timeframeCyr: t.timeframeCyr,
@@ -1615,7 +2259,6 @@
             riskPts: t.riskPts,
             potPts: t.potPts,
             riskReward: t.riskReward,
-            tfD1, tfH4, tfH1, tfM15, tfOk, emotionVal,
             lots30,
             lotsOff,
             resStd,
@@ -1636,6 +2279,7 @@
             img,
             aoiNum,
             flD, fl4H, fl1H, fl15M,
+            tfD1, tfH4, tfH1, tfM15, tfOk, emotionVal,
             struct_30: document.getElementById('f-struct')?.value || (isLong ? 'слом ↑' : 'слом ↓'),
             sweptVal,
             sweptLvlRaw,
@@ -1711,6 +2355,10 @@
             flow_4h: snap.fl4H,
             flow_1h: snap.fl1H,
             flow_15m: snap.fl15M,
+            tf_d1: snap.tfD1 ?? 'да',
+            tf_h4: snap.tfH4 ?? 'да',
+            tf_h1: snap.tfH1 ?? 'да',
+            tf_m15: snap.tfM15 ?? 'да',
             struct_30: snap.struct_30,
             swept_30: snap.sweptVal,
             swept_level_30: sweptLvlFormatted,
@@ -1719,10 +2367,6 @@
             fuel_30: snap.fuel_30,
             touch_30: snap.touch_30,
             check_30: snap.chk30,
-            tf_d1: snap.tfD1 ?? 'да',
-            tf_h4: snap.tfH4 ?? 'да',
-            tf_h1: snap.tfH1 ?? 'да',
-            tf_m15: snap.tfM15 ?? 'да',
             tf_ok: snap.tfOk ?? 'да',
             emotion: snap.emotionVal || 'Спокоен',
             safe_pct: numStr(0.5),
@@ -1788,7 +2432,7 @@
     function restoreSavedTradeState() {
         if (!currentTrade) return;
         const bucket = getTplBucket();
-        const saved = bucket.batchQueue.find(item => item.tradeId === currentTrade.id || item.signature === currentTrade.signature);
+        const saved = bucket.batchQueue.find(item => item.signature === currentTrade.signature);
         if (!saved) return;
 
         screenshotUrl = saved.img || '';
@@ -1806,6 +2450,7 @@
         setVal('f-swept', saved.sweptVal);
         setVal('f-conf', saved.conf);
         setVal('f-err', saved.errVal);
+        setVal('f-emotion', saved.emotionVal);
 
         if (saved.candle_col) setCandleColVal(saved.candle_col);
 
@@ -1836,28 +2481,25 @@
         if (saved.f2) setChipVal('f-f2', saved.f2);
         if (saved.f3) setChipVal('f-f3', saved.f3);
         if (saved.f4) setChipVal('f-f4', saved.f4);
-        if (saved.reached) setChipVal('f-reached', saved.reached);
-        if (saved.aoi_res) setChipVal('f-aoi-res', saved.aoi_res);
         if (saved.tfD1) setChipVal('f-tf-d1', saved.tfD1);
         if (saved.tfH4) setChipVal('f-tf-h4', saved.tfH4);
         if (saved.tfH1) setChipVal('f-tf-h1', saved.tfH1);
         if (saved.tfM15) setChipVal('f-tf-m15', saved.tfM15);
         if (saved.tfOk) setChipVal('f-tf-ok', saved.tfOk);
-        setVal('f-emotion', saved.emotionVal);
+        if (saved.reached) setChipVal('f-reached', saved.reached);
+        if (saved.aoi_res) setChipVal('f-aoi-res', saved.aoi_res);
 
-        if (saved.signature === currentTrade.signature) {
-            setVal('f-swept-lvl', saved.sweptVal === 'ничего не снято' ? '' : numStr(saved.sweptLvlRaw));
-            if (saved.hit_1r) setChipVal('f-hit1r', saved.hit_1r);
-            if (saved.hit_3r) setChipVal('f-hit3r', saved.hit_3r);
-            if (saved.resStd) setChipVal('f-res', saved.resStd);
-            if (saved.res30Val) {
-                setChipVal('f-res30', saved.res30Val);
-                const manWrap = document.getElementById('bt-manual-r-wrap');
-                if (manWrap) {
-                    manWrap.style.display = (saved.res30Val === 'частичная фиксация' || saved.res30Val === 'закрыл руками') ? 'flex' : 'none';
-                }
-                if (!isNaN(saved.manualRNum)) setVal('f-manual-r30', numStr(saved.manualRNum));
+        setVal('f-swept-lvl', saved.sweptVal === 'ничего не снято' ? '' : numStr(saved.sweptLvlRaw));
+        if (saved.hit_1r) setChipVal('f-hit1r', saved.hit_1r);
+        if (saved.hit_3r) setChipVal('f-hit3r', saved.hit_3r);
+        if (saved.resStd) setChipVal('f-res', saved.resStd);
+        if (saved.res30Val) {
+            setChipVal('f-res30', saved.res30Val);
+            const manWrap = document.getElementById('bt-manual-r-wrap');
+            if (manWrap) {
+                manWrap.style.display = (saved.res30Val === 'частичная фиксация' || saved.res30Val === 'закрыл руками') ? 'flex' : 'none';
             }
+            if (!isNaN(saved.manualRNum)) setVal('f-manual-r30', numStr(saved.manualRNum));
         }
     }
 
@@ -1963,7 +2605,7 @@
                 html += `<div><div class="bt-lbl">ПО СИСТЕМЕ</div>${makeSwitch('f-tf-ok', 'да', 'check')}</div>`;
             }
             if (has('emotion')) {
-                html += `<div><div class="bt-lbl">ЭМОЦИЯ</div>${makeSelect('f-emotion', ['Спокоен', 'Уверен', 'Страх', 'Жадность', 'FOMO', 'Тильт'], 'Спокоен')}</div>`;
+                html += `<div><div class="bt-lbl">ЭМОЦИЯ</div>${makeSelect('f-emotion', ['Спокоен', 'Уверен', 'Страх', 'Жадность', 'FOMO', 'Тильт'], state.emotion || 'Спокоен')}</div>`;
             }
             html += `</div>`;
         }
@@ -1980,7 +2622,18 @@
             const st2Prob = isLong ? 'пробой ↓ · пробой ↓ · слом ↑' : 'пробой ↑ · пробой ↑ · слом ↓';
             const stFake = isLong ? 'ложный пробой ↓ · слом ↑' : 'ложный пробой ↑ · слом ↓';
             const stCont = isLong ? 'пробой ↑ · пробой ↑' : 'пробой ↓ · пробой ↓';
-            const defStruct = state.struct30 || st2Prob;
+            const defStruct = ind.detectedStructure || state.struct30 || st2Prob;
+
+            const mz = ind.matchedZone;
+            const msweep = ind.matchedSweep;
+            const defZone30 = mz?.zoneType || 'Разворотная зона';
+            const defFuel30 = mz?.fuel || 'да';
+            const defTouch30 = mz?.touch || '1';
+            const defAgainst30 = mz?.against || 'нет';
+            const defSwept30 = msweep?.sweptType || 'приманка';
+            const defSweptPrice = msweep?.price != null ? msweep.price : t.entryExtreme;
+            const zoneBolt = mz ? `<span class="bt-bolt" title="Распознано по зоне на графике: «${mz.rawText}»">⚡</span>` : '';
+            const sweepBolt = msweep ? `<span class="bt-bolt" title="Распознан снятый уровень: «${msweep.rawText}»">⚡</span>` : BOLT;
 
             html += `
                 <div class="bt-section-box">
@@ -1993,7 +2646,7 @@
                     </div>
 
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; gap:4px;">
-                        <div class="bt-lbl" style="margin:0; flex-shrink:0;">СТРУКТУРА</div>
+                        <div class="bt-lbl" style="margin:0; flex-shrink:0;">СТРУКТУРА ${ind.detectedStructure ? BOLT : ''}</div>
                         <div style="display:flex; gap:3px; flex-wrap:nowrap;">
                             <button type="button" class="bt-struct-preset" data-st="${stSlom}">Слом</button>
                             <button type="button" class="bt-struct-preset" data-st="${st2Prob}">2 проб.+слом</button>
@@ -2007,8 +2660,8 @@
                 <div class="bt-section-box">
                     <div style="display:grid; grid-template-columns:1.05fr 0.95fr; gap:6px;">
                         <div>
-                            <div class="bt-lbl">ВИД ЗОНЫ</div>
-                            ${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель', 'Средний покупатель', 'Красивый покупатель', 'Сильный продавец', 'Средний продавец', 'Красивый продавец', 'Зона входа', 'Проторговка', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], 'Разворотная зона')}
+                            <div class="bt-lbl">ВИД ЗОНЫ ${zoneBolt}</div>
+                            ${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель', 'Средний покупатель', 'Красивый покупатель', 'Сильный продавец', 'Средний продавец', 'Красивый продавец', 'Зона входа', 'Проторговка', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], defZone30)}
                         </div>
                         <div>
                             <div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>
@@ -2018,29 +2671,29 @@
 
                     <div style="display:grid; grid-template-columns:0.95fr 1.25fr 0.95fr; gap:6px; align-items:start;">
                         <div>
-                            <div class="bt-lbl">ТОПЛИВО</div>
-                            ${makeSwitch('f-fuel30', 'да', 'gold')}
+                            <div class="bt-lbl">ТОПЛИВО ${zoneBolt}</div>
+                            ${makeSwitch('f-fuel30', defFuel30, 'gold')}
                         </div>
                         <div>
-                            <div class="bt-lbl">КАСАНИЕ ЗОНЫ</div>
-                            ${makeChips('f-touch30', [{val:'1', label:'1'}, {val:'2', label:'2'}, {val:'3 и больше', label:'3+'}], '1', 3)}
+                            <div class="bt-lbl">КАСАНИЕ ЗОНЫ ${zoneBolt}</div>
+                            ${makeChips('f-touch30', [{val:'1', label:'1'}, {val:'2', label:'2'}, {val:'3 и больше', label:'3+'}], defTouch30, 3)}
                         </div>
                         <div>
-                            <div class="bt-lbl">ПРОТИВ ПОТОКА</div>
-                            ${makeSwitch('f-against30', 'нет', 'danger')}
+                            <div class="bt-lbl">ПРОТИВ ПОТОКА ${zoneBolt}</div>
+                            ${makeSwitch('f-against30', defAgainst30, 'danger')}
                         </div>
                     </div>
 
                     <div style="display:grid; grid-template-columns:1.15fr 1fr; gap:6px; align-items:start;">
                         <div>
-                            <div class="bt-lbl">ЧТО СНЯТО ПЕРЕД ВХОДОМ</div>
-                            ${makeSelect('f-swept', ['приманка', 'полка', 'уровень 15м', 'уровень 1Ч', 'уровень 4Ч', 'уровень Д', 'склейка 15м/1Ч', 'склейка Д · 4Ч', 'ничего не снято'], 'приманка', '0px')}
+                            <div class="bt-lbl">ЧТО СНЯТО ПЕРЕД ВХОДОМ ${msweep ? sweepBolt : ''}</div>
+                            ${makeSelect('f-swept', ['приманка', 'полка', 'уровень 15м', 'уровень 1Ч', 'уровень 4Ч', 'уровень Д', 'склейка 15м/1Ч', 'склейка Д · 4Ч', 'ничего не снято'], defSwept30, '0px')}
                         </div>
                         <div>
-                            <div class="bt-lbl">ЦЕНА УРОВНЯ СНЯТИЯ ${BOLT}</div>
+                            <div class="bt-lbl">ЦЕНА УРОВНЯ СНЯТИЯ ${sweepBolt}</div>
                             <div style="display:flex; gap:3px; height:28px;">
-                                <input type="text" id="f-swept-lvl" value="${t.entryExtreme !== '' ? numStr(t.entryExtreme) : ''}" placeholder="Цена уровня..." style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:6px; font-size:11px; outline:none;">
-                                <button type="button" id="bt-fill-swept-lvl" title="Вернуть цену минимума/максимума свечи входа (${t.entryExtreme})" style="height:28px; background:#18181d; color:#f3d26b; border:1px solid #282830; border-radius:6px; padding:0 6px; cursor:pointer; font-size:11px;">↺</button>
+                                <input type="text" id="f-swept-lvl" value="${defSweptPrice !== '' ? numStr(defSweptPrice) : ''}" placeholder="Цена уровня..." style="width:100%; height:28px; box-sizing:border-box; background:#16161b; color:#f4f4f5; border:1px solid #282830; padding:0 6px; border-radius:6px; font-size:11px; outline:none;">
+                                <button type="button" id="bt-fill-swept-lvl" title="Вернуть расчётную цену уровня снятия (${defSweptPrice})" style="height:28px; background:#18181d; color:#f3d26b; border:1px solid #282830; border-radius:6px; padding:0 6px; cursor:pointer; font-size:11px;">↺</button>
                             </div>
                         </div>
                     </div>
@@ -2098,7 +2751,16 @@
                     <input type="text" id="f-manual-r30" placeholder="0,0" style="width:60px; background:#0d0d10; color:#ffffff; border:1px solid #4a3f23; border-radius:4px; padding:3px 6px; font-size:11px; text-align:center; outline:none;">
                 </div>
             `;
-        } else if (has('result') || has('res_off') || has('r_out')) {
+        } else if (has('res_off')) {
+            const defOff = t.autoResult === 'Безубыток' ? 'Сейф/БУ' : t.autoResult;
+            html += `<div class="bt-lbl">РЕЗУЛЬТАТ СДЕЛКИ ${BOLT}</div>` +
+                makeChips('f-res', [
+                    { val: 'Тейк', label: 'Тейк', kbd: 'Q', tone: 'green' },
+                    { val: 'Стоп', label: 'Стоп', kbd: 'W', tone: 'red' },
+                    { val: 'Сейф/БУ', label: 'Сейф/БУ', kbd: 'E' },
+                    { val: 'Бу', label: 'Бу', kbd: 'R' }
+                ], defOff, 4);
+        } else if (has('result') || has('r_out')) {
             html += `<div class="bt-lbl">РЕЗУЛЬТАТ СДЕЛКИ ${BOLT}</div>` +
                 makeChips('f-res', [
                     { val: 'Тейк', label: 'Тейк', kbd: 'Q', tone: 'green' },
@@ -2195,8 +2857,9 @@
         if (fillSweptBtn) {
             fillSweptBtn.onclick = () => {
                 const inp = document.getElementById('f-swept-lvl');
-                if (inp && currentTrade?.entryExtreme !== '') {
-                    inp.value = numStr(currentTrade.entryExtreme);
+                const fallbackPrice = currentTrade?.ind?.matchedSweep?.price ?? currentTrade?.entryExtreme ?? '';
+                if (inp && fallbackPrice !== '') {
+                    inp.value = numStr(fallbackPrice);
                     updatePreviewBar();
                 }
             };
@@ -2207,14 +2870,18 @@
                 if (el.id === 'f-swept') {
                     const lvlInp = document.getElementById('f-swept-lvl');
                     if (lvlInp) {
+                        const fallbackPrice = currentTrade?.ind?.matchedSweep?.price ?? currentTrade?.entryExtreme ?? '';
                         lvlInp.value = el.value === 'ничего не снято'
                             ? ''
-                            : (currentTrade?.entryExtreme !== '' ? numStr(currentTrade.entryExtreme) : '');
+                            : (fallbackPrice !== '' ? numStr(fallbackPrice) : '');
                     }
                 }
                 if (el.id === 'f-struct') {
                     saveState({ struct30: el.value });
                     syncPresetHighlights();
+                }
+                if (el.id === 'f-emotion') {
+                    saveState({ emotion: el.value });
                 }
                 if (el.id === 'f-conf') {
                     saveState({ conf: el.value });
@@ -2277,25 +2944,41 @@
         }
 
         if (currentTrade.signature !== prevSig) {
-            setChipVal('f-res', currentTrade.autoResult);
+            const hasResOff = getActiveColumns().includes('res_off');
+            const defOff = currentTrade.autoResult === 'Безубыток' ? 'Сейф/БУ' : currentTrade.autoResult;
+            setChipVal('f-res', hasResOff ? defOff : currentTrade.autoResult);
+
             const defRes30 = currentTrade.autoResult === 'Тейк' ? 'цель' : (currentTrade.autoResult === 'Стоп' ? 'стоп' : 'безубыток');
             setChipVal('f-res30', defRes30);
             setChipVal('f-hit1r', currentTrade.reached1R ? 'да' : 'нет');
             setChipVal('f-hit3r', currentTrade.reached3R ? 'да' : 'нет');
+
+            const isLong = currentTrade.direction === 'LONG';
+            const ind = currentTrade.ind || {};
             if (document.getElementById('f-candle-col')) {
-                const isLong = currentTrade.direction === 'LONG';
-                setCandleColVal(currentTrade.ind?.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3'));
+                setCandleColVal(ind.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3'));
+            }
+            if (ind.detectedStructure && document.getElementById('f-struct')) {
+                document.getElementById('f-struct').value = ind.detectedStructure;
+                syncPresetHighlights();
+            }
+            if (ind.matchedZone) {
+                const zSel = document.getElementById('f-zone30');
+                if (zSel) zSel.value = ind.matchedZone.zoneType;
+                setChipVal('f-fuel30', ind.matchedZone.fuel);
+                setChipVal('f-touch30', ind.matchedZone.touch);
+                setChipVal('f-against30', ind.matchedZone.against);
+            }
+            const sweptSel = document.getElementById('f-swept');
+            if (sweptSel && ind.matchedSweep) {
+                sweptSel.value = ind.matchedSweep.sweptType;
             }
             const sweptLvlEl = document.getElementById('f-swept-lvl');
-            const sweptSelVal = document.getElementById('f-swept')?.value;
+            const fallbackPrice = ind.matchedSweep?.price ?? currentTrade.entryExtreme ?? '';
             if (sweptLvlEl) {
-                sweptLvlEl.value = (sweptSelVal === 'ничего не снято' || currentTrade.entryExtreme === '')
+                sweptLvlEl.value = (sweptSel?.value === 'ничего не снято' || fallbackPrice === '')
                     ? ''
-                    : numStr(currentTrade.entryExtreme);
-            }
-            const fillSweptBtn = document.getElementById('bt-fill-swept-lvl');
-            if (fillSweptBtn) {
-                fillSweptBtn.title = `Вернуть цену минимума/максимума свечи входа (${currentTrade.entryExtreme})`;
+                    : numStr(fallbackPrice);
             }
             updateHeaderUI();
             autoSuggestError();
@@ -2304,30 +2987,54 @@
         }
     }
 
+    let lastObservedBarKey = '';
+
+    function syncRadarOnBarClose(model) {
+        if (!model) return;
+        try {
+            const ms = typeof model.mainSeries === 'function' ? model.mainSeries() : model.mainSeries;
+            const bars = typeof ms?.bars === 'function' ? ms.bars() : ms?.bars;
+            if (!bars || typeof bars.lastIndex !== 'function') return;
+
+            const lastIdx = bars.lastIndex();
+            if (lastIdx == null) return;
+            const lastBar = getPlotRow(bars, lastIdx);
+            const lastTime = lastBar?.[0] || 0;
+            const barKey = `${lastIdx}_${lastTime}`;
+
+            if (barKey === lastObservedBarKey) return;
+            lastObservedBarKey = barKey;
+
+            const symInfo = (typeof ms.symbolInfo === 'function' ? ms.symbolInfo() : ms._symbolInfo) || {};
+            const cleanSymbol = String(symInfo.name || 'XAUUSD').split(':').pop();
+            const rawInterval = typeof ms.interval === 'function' ? ms.interval() : (ms._interval || '1');
+            syncGraphicsMemoryO1(model, `${cleanSymbol}_${rawInterval}`);
+        } catch (e) {}
+    }
+
     setInterval(() => {
         const model = getTvModel();
         if (!model) return;
+
+        syncRadarOnBarClose(model);
 
         const selId = detectCurrentlySelectedToolId(model);
         if (selId && selId !== lastChartSelectedId) {
             lastChartSelectedId = selId;
             lastSelectedToolId = selId;
+            if (modalEl.style.display === 'block') syncLiveChartChanges();
         }
 
         try {
             const hov = typeof model.hoveredSource === 'function' ? model.hoveredSource() : model._hoveredSource;
             if (hov && isSupportedTool(hov)) lastHoveredToolId = getToolId(hov);
         } catch (e) {}
-
-        if (modalEl.style.display === 'block') {
-            syncLiveChartChanges();
-        }
-    }, 250);
+    }, 500);
 
     window.addEventListener('pointerup', e => {
         if (modalEl.style.display !== 'block') return;
         if (modalEl.contains(e.target)) return;
-        setTimeout(syncLiveChartChanges, 30);
+        setTimeout(syncLiveChartChanges, 35);
     }, true);
 
     function renderSettingsDrawer() {
@@ -2335,15 +3042,23 @@
         document.getElementById('bt-custom-paste-col').value = getActivePasteCol();
         document.getElementById('bt-custom-start-row').value = getActiveStartRow();
 
+        const cols = getActiveColumns();
+        const needsStartRow = cols.includes('cum_r') || cols.includes('dd_r');
+        const startRowBox = document.getElementById('bt-start-row-box');
+        const anchorsGrid = document.getElementById('bt-custom-anchors-grid');
+        if (startRowBox && anchorsGrid) {
+            startRowBox.style.display = needsStartRow ? 'block' : 'none';
+            anchorsGrid.style.gridTemplateColumns = needsStartRow ? '1fr 1fr' : '1fr';
+        }
+
         const colsWrap = document.getElementById('bt-cols-editor-wrap');
         const toggleColsBtn = document.getElementById('bt-toggle-cols-btn');
         const shouldShowCols = showColumnEditor || state.presetKey === 'custom';
         colsWrap.style.display = shouldShowCols ? 'block' : 'none';
         toggleColsBtn.innerText = shouldShowCols
             ? '▲ Скрыть список колонок'
-            : `🔧 Настроить колонки таблицы (${getActiveColumns().length} шт.)`;
+            : `🔧 Настроить колонки таблицы (${cols.length} шт.)`;
 
-        const cols = getActiveColumns();
         const baseColIdx = colLetterToIndex(getActivePasteCol());
         const pillsContainer = document.getElementById('bt-schema-pills');
 
@@ -2504,8 +3219,12 @@
 
         document.getElementById('bt-info-sym').innerText = `${currentTrade.symbol} · ${currentTrade.timeframeLat}`;
         sessionPillBtn.innerText = (manualSessionOverride ? '' : '⚡ ') + getActiveSession();
-        document.getElementById('bt-info-date').innerText = `${currentTrade.shortDate} · ${currentTrade.mskTime} МСК`;
-        document.getElementById('bt-info-date').title = `Дата и время входа: ${currentTrade.candleDate}, ${currentTrade.mskTime} МСК`;
+
+        const useLocal = state.timeMode === 'local';
+        const dispDate = useLocal ? currentTrade.shortDateLocal : currentTrade.shortDateMsk;
+        const dispTime = useLocal ? currentTrade.localTime : currentTrade.mskTime;
+        const tzTag = useLocal ? 'Лок.' : 'МСК';
+        dateBtnEl.innerText = `${dispDate} · ${dispTime} ${tzTag}`;
 
         const badge = document.getElementById('bt-info-badge');
         badge.innerText = `${currentTrade.direction} · ${numStr(currentTrade.riskReward)}R`;
@@ -2549,7 +3268,8 @@
             saveState({
                 aoiNum: (cols.includes('valid_aoi') && existingIdx === -1) ? snap.aoiNum + 1 : snap.aoiNum,
                 flowD: snap.flD, flow4H: snap.fl4H, flow1H: snap.fl1H, flow15M: snap.fl15M,
-                struct30: snap.struct_30
+                struct30: snap.struct_30,
+                emotion: snap.emotionVal
             });
 
             if (!stayOpen) {
@@ -2627,6 +3347,13 @@
         const next = list[(list.indexOf(curr) + 1) % list.length];
         manualSessionOverride = next;
         updateHeaderUI();
+    };
+
+    dateBtnEl.onclick = () => {
+        const nextMode = state.timeMode === 'local' ? 'msk' : 'local';
+        saveState({ timeMode: nextMode });
+        updateHeaderUI();
+        showToast(nextMode === 'local' ? 'Включено время по часовому поясу графика' : 'Включено московское время (МСК, UTC+3)');
     };
 
     screenPillBtn.onclick = () => {
@@ -2935,11 +3662,12 @@
             const poiMap = { '1': 'OB', '2': 'Имбаланс', '3': '50% МС' };
             const formMap = { '1': 'SCOB', '2': 'Свип', '3': 'Пин-бар (IFS)', '4': 'Поглощение', '5': 'Правильный откат' };
 
+            const hasResOff = getActiveColumns().includes('res_off');
             const resMap = {
                 'q': 'Тейк', 'й': 'Тейк',
                 'w': 'Стоп', 'ц': 'Стоп',
-                'e': 'Безубыток', 'у': 'Безубыток',
-                'r': 'Пропуск', 'к': 'Пропуск'
+                'e': hasResOff ? 'Сейф/БУ' : 'Безубыток', 'у': hasResOff ? 'Сейф/БУ' : 'Безубыток',
+                'r': hasResOff ? 'Бу' : 'Пропуск', 'к': hasResOff ? 'Бу' : 'Пропуск'
             };
             const res30Map = {
                 'q': 'цель', 'й': 'цель',
@@ -2980,7 +3708,7 @@
                     const v30 = res30Map[kl];
                     setChipVal('f-res30', v30);
                     const manWrap = document.getElementById('bt-manual-r-wrap');
-                    if (manWrap) manWrap.style.display = (v30 === 'закрыл руками') ? 'flex' : 'none';
+                    if (manWrap) manWrap.style.display = (v30 === 'частичная фиксация' || v30 === 'закрыл руками') ? 'flex' : 'none';
                 } else {
                     setChipVal('f-res', resMap[kl]);
                     if (resMap[kl] === 'Пропуск' && getChipVal('f-liq') === 'нет') {
