@@ -1099,8 +1099,7 @@ function handleRemoteScriptText(txt) {
       else if (entryInside) rank = 22;
 
       if (bornOnEntryBar) rank += 15;
-      if (isDead2Bar) rank += 16;
-      else if (zInfo.isDeadFallback) rank += 1;
+      if (zInfo.isDeadFallback) rank += 2;
 
       const entryDist = entryPrice < bottom ? (bottom - entryPrice) : (entryPrice > top ? (entryPrice - top) : 0);
       const barDist = (triggerIdx != null && barX1 > -100000) ? Math.abs(triggerIdx - barX1) : 500;
@@ -1111,26 +1110,23 @@ function handleRemoteScriptText(txt) {
       const z05 = parseZoneLabelText(lb.t);
       if (!z05 || !z05.htfRank) continue;
       const midY = Number(lb.y || 0);
-      const box05 = boxes.find(bx => bx.tva === 'center' && Math.abs(((Number(bx.y1 || 0) + Number(bx.y2 || 0)) / 2) - midY) < 0.05);
-      const top05 = box05 ? Math.max(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY + tol;
-      const bot05 = box05 ? Math.min(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY - tol;
-      const hitMid = (midY >= minP - tol && midY <= maxP + tol);
-      const sideMatch = (z05.side === 'ANY' || z05.side === (isLong ? 'LONG' : 'SHORT'));
-      const hitBox = box05 && sideMatch && (entryPrice >= bot05 - tol && entryPrice <= top05 + tol);
+      if (!midY) continue;
 
-      if (hitMid || hitBox) {
-        const htfRankScore = (hitMid && sideMatch) ? (14 - z05.htfRank) : (hitMid ? (20 - z05.htfRank) : (32 - z05.htfRank));
-        zoneCandidates.push({
-          rank: htfRankScore,
-          overlapHeight: Math.min(tradeHigh, top05) - Math.max(tradeLow, bot05),
-          entryDist: Math.abs(entryPrice - midY),
-          barDist: 0,
-          top: top05,
-          bottom: bot05,
-          barX1: -999999,
-          zInfo: z05
-        });
-      }
+      const hitMid = (midY >= minP - tol && midY <= maxP + tol);
+      if (!hitMid) continue;
+
+      const sideMatch = (z05.side === 'ANY' || z05.side === (isLong ? 'LONG' : 'SHORT'));
+      const htfRankScore = sideMatch ? (14 - z05.htfRank) : (24 - z05.htfRank);
+      zoneCandidates.push({
+        rank: htfRankScore,
+        overlapHeight: tol * 2,
+        entryDist: Math.abs(entryPrice - midY),
+        barDist: 0,
+        top: midY + tol,
+        bottom: midY - tol,
+        barX1: -999999,
+        zInfo: z05
+      });
     }
 
     if (zoneCandidates.length > 0) {
@@ -3183,24 +3179,59 @@ function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; 
     } catch (e) {}
   }
 
-  setInterval(() => {
+  let toolbarRo = null;
+  function initToolbarObservers() {
     mountNativeToolbarButton();
+    if (typeof ResizeObserver !== 'function') return;
+
+    let rafId = 0;
+    const scheduleReposition = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        mountNativeToolbarButton();
+      });
+    };
+
+    window.addEventListener('resize', scheduleReposition, { passive: true });
+
+    const tryAttachRo = () => {
+      const toolbarEl = document.getElementById('drawing-toolbar');
+      const favBtn = document.getElementById('drawing-toolbar-favorite-drawings');
+      if (!toolbarEl || !favBtn) return false;
+
+      if (!toolbarRo) {
+        toolbarRo = new ResizeObserver(scheduleReposition);
+        toolbarRo.observe(toolbarEl);
+        const spacerEl = toolbarEl.querySelector('[class*="fill-"]');
+        if (spacerEl) toolbarRo.observe(spacerEl);
+
+        const mo = new MutationObserver(scheduleReposition);
+        mo.observe(toolbarEl, { childList: true, subtree: true });
+      }
+      scheduleReposition();
+      return true;
+    };
+
+    if (!tryAttachRo()) {
+      const bootMo = new MutationObserver(() => {
+        if (tryAttachRo()) bootMo.disconnect();
+      });
+      bootMo.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  initToolbarObservers();
+
+  window.addEventListener('pointerdown', () => {
     const model = getTvModel();
     if (!model) return;
     syncRadarOnBarClose(model);
-
-    const selId = detectCurrentlySelectedToolId(model);
-    if (selId && selId !== lastChartSelectedId) {
-      lastChartSelectedId = selId;
-      lastSelectedToolId = selId;
-      if (modalEl.style.display === 'block') syncLiveChartChanges();
-    }
-
     try {
       const hov = typeof model.hoveredSource === 'function' ? model.hoveredSource() : model._hoveredSource;
       if (hov && isSupportedTool(hov)) lastHoveredToolId = getToolId(hov);
     } catch (e) {}
-  }, 500);
+  }, { capture: true, passive: true });
 
   window.addEventListener('pointerup', e => {
     if (modalEl.style.display !== 'block' || modalEl.contains(e.target)) return;
