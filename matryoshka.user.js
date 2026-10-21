@@ -2227,14 +2227,14 @@ function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; 
       nativeBtn.tabIndex = -1;
       nativeBtn.title = tipText;
       nativeBtn.setAttribute('aria-label', tipText);
-      nativeBtn.style.cssText = 'position:fixed;z-index:9999990;width:38px;height:38px;padding:0;border:none;border-radius:6px;background:transparent;cursor:pointer;display:none;align-items:center;justify-content:center;transition:background 0.12s ease;';
+      nativeBtn.style.cssText = 'position:fixed;z-index:9999990;width:34px;height:34px;padding:0;border:none;border-radius:6px;background:transparent;cursor:pointer;display:none;align-items:center;justify-content:center;transition:background 0.12s ease;';
       nativeBtn.onmouseenter = () => { nativeBtn.style.background = 'rgba(255,255,255,0.08)'; };
       nativeBtn.onmouseleave = () => { nativeBtn.style.background = 'transparent'; };
       nativeBtn.innerHTML = `
         <span role="img" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;pointer-events:none;">
           ${NATIVE_TOOLBAR_SVG}
         </span>
-        <span id="bt-native-badge" style="display:none;position:absolute;top:3px;right:3px;min-width:13px;height:13px;padding:0 3px;border-radius:99px;background:#e5c158;color:#09090b;font-size:9px;font-weight:800;line-height:13px;text-align:center;box-sizing:border-box;pointer-events:none;"></span>
+        <span id="bt-native-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:13px;height:13px;padding:0 3px;border-radius:99px;background:#e5c158;color:#09090b;font-size:9px;font-weight:800;line-height:13px;text-align:center;box-sizing:border-box;pointer-events:none;"></span>
       `;
       nativeBtn.onclick = e => {
         e.preventDefault();
@@ -2246,20 +2246,21 @@ function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; 
     }
 
     const favBtn = document.getElementById('drawing-toolbar-favorite-drawings');
-    const toolbarEl = document.getElementById('drawing-toolbar');
-    const spacerEl = toolbarEl?.querySelector('[class*="fill-"]');
+    const trashEl = document.querySelector('#drawing-toolbar [data-name="removeAllDrawingTools"]');
     const favRect = favBtn?.getBoundingClientRect();
+    const trashRect = trashEl?.getBoundingClientRect();
+    const freeLeftGap = (favRect && trashRect) ? (favRect.top - trashRect.bottom) : 0;
 
-    if (favRect && favRect.width > 0 && (!spacerEl || spacerEl.clientHeight >= 38)) {
-      nativeBtn.style.left = `${Math.round(favRect.left + (favRect.width - 38) / 2)}px`;
-      nativeBtn.style.top = `${Math.round(favRect.top - 40)}px`;
+    if (favRect && favRect.width > 0 && freeLeftGap >= 36) {
+      nativeBtn.style.left = `${Math.round(favRect.left + (favRect.width - 34) / 2)}px`;
+      nativeBtn.style.top = `${Math.round(favRect.top - 36)}px`;
       nativeBtn.style.display = 'flex';
     } else {
-      const replayBtn = document.getElementById('header-toolbar-replay') || document.getElementById('header-toolbar-undo-redo');
-      const repRect = replayBtn?.getBoundingClientRect();
-      if (repRect && repRect.width > 0) {
-        nativeBtn.style.left = `${Math.round(repRect.right + 8)}px`;
-        nativeBtn.style.top = `${Math.round(repRect.top + (repRect.height - 34) / 2)}px`;
+      const undoRedoWrap = document.getElementById('header-toolbar-undo-redo') || document.getElementById('header-toolbar-replay');
+      const urRect = undoRedoWrap?.getBoundingClientRect();
+      if (urRect && urRect.width > 0) {
+        nativeBtn.style.left = `${Math.round(urRect.right + 10)}px`;
+        nativeBtn.style.top = `${Math.round(urRect.top + (urRect.height - 34) / 2)}px`;
         nativeBtn.style.display = 'flex';
       } else if (favRect && favRect.width > 0) {
         nativeBtn.style.left = `${Math.round(favRect.right + 6)}px`;
@@ -3195,7 +3196,7 @@ function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; 
 
     window.addEventListener('resize', scheduleReposition, { passive: true });
 
-    const tryAttachRo = () => {
+    const tryAttach = () => {
       const toolbarEl = document.getElementById('drawing-toolbar');
       const favBtn = document.getElementById('drawing-toolbar-favorite-drawings');
       if (!toolbarEl || !favBtn) return false;
@@ -3213,9 +3214,9 @@ function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; 
       return true;
     };
 
-    if (!tryAttachRo()) {
+    if (!tryAttach()) {
       const bootMo = new MutationObserver(() => {
-        if (tryAttachRo()) bootMo.disconnect();
+        if (tryAttach()) bootMo.disconnect();
       });
       bootMo.observe(document.body, { childList: true, subtree: true });
     }
