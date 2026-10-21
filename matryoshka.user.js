@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         Matryoshka Backtest Auto-Logger
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  Экспорт сделок из TradingView в Excel и Google Таблицы
 // @match        https://*.tradingview.com/*
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @updateURL    https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js
 // @run-at       document-idle
@@ -18,7 +20,13 @@
   const STORAGE_KEY = 'matryoshka_logger_v2_rowfree';
   const isMac = /Mac|iPod|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
+  const SCRIPT_VERSION = '3.9';
+  const SCRIPT_RAW_URL = 'https://raw.githubusercontent.com/Masukuda/matryoshka-logger/main/matryoshka.user.js';
+  const MIN_ZI_VERSION = 3.3;
+  const MIN_MV_PLOTS = 23;
+
   const LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="7" r="4.5" stroke="#e5c158" stroke-width="2"/><path d="M5.5 19.5C5.5 15.634 8.41015 12.5 12 12.5C15.5899 12.5 18.5 15.634 18.5 19.5C18.5 20.8807 17.3807 22 16 22H8C6.61929 22 5.5 20.8807 5.5 19.5Z" stroke="#e5c158" stroke-width="2"/><circle cx="12" cy="17.5" r="1.5" fill="#e5c158"/></svg>`;
+  const NATIVE_TOOLBAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" fill="none"><circle cx="14" cy="9.5" r="4.5" stroke="#e5c158" stroke-width="1.8"/><path d="M7.5 21C7.5 17.134 10.4101 14 14 14C17.5899 14 20.5 17.134 20.5 21C20.5 22.3807 19.3807 23.5 18 23.5H10C8.61929 23.5 7.5 22.3807 7.5 21Z" stroke="#e5c158" stroke-width="1.8"/><circle cx="14" cy="19" r="1.6" fill="#e5c158"/></svg>`;
   const BOLT = `<span class="bt-bolt" title="Заполнено автоматически по данным графика">⚡</span>`;
 
   const CANDLE_COLORS = {
@@ -157,6 +165,7 @@
   let showColumnEditor = false;
   let isFixHelpOpen = false;
   let isInternalCopy = false;
+  let remoteUpdateVersion = null;
 
   const hookedDelegates = new WeakSet();
   const hookedPrimitiveMaps = new WeakSet();
@@ -179,6 +188,100 @@
       else del.subscribe(cb);
       hookedDelegates.add(del);
     } catch (e) {}
+  }
+
+function handleRemoteScriptText(txt) {
+    if (!txt) return;
+    const m = txt.match(/\/\/\s*@version\s+([0-9.]+)/i);
+    if (m && m[1]) {
+      const remoteVer = m[1].trim();
+      sessionStorage.setItem('bt_remote_ver', remoteVer);
+      if (remoteVer !== SCRIPT_VERSION && parseFloat(remoteVer) > parseFloat(SCRIPT_VERSION)) {
+        remoteUpdateVersion = remoteVer;
+        if (typeof updateVersionBannerUI === 'function') updateVersionBannerUI();
+      }
+    }
+  }
+
+  function checkGithubScriptUpdate() {
+    try {
+      const cached = sessionStorage.getItem('bt_remote_ver');
+      if (cached) {
+        if (cached !== SCRIPT_VERSION && parseFloat(cached) > parseFloat(SCRIPT_VERSION)) {
+          remoteUpdateVersion = cached;
+          if (typeof updateVersionBannerUI === 'function') updateVersionBannerUI();
+        }
+        return;
+      }
+
+      if (typeof GM_xmlhttpRequest !== 'undefined') {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: `${SCRIPT_RAW_URL}?t=${Date.now()}`,
+          headers: { 'Cache-Control': 'no-cache' },
+          onload: function(res) {
+            if (res.status === 200 && res.responseText) {
+              handleRemoteScriptText(res.responseText);
+            }
+          },
+          onerror: function(err) {
+            console.warn('[Бэктест Хэлпер] Ошибка GM_xmlhttpRequest:', err);
+          }
+        });
+      } else {
+        fetch(`${SCRIPT_RAW_URL}?t=${Date.now()}`, { cache: 'no-store' })
+          .then(r => r.ok ? r.text() : '')
+          .then(txt => handleRemoteScriptText(txt))
+          .catch(err => console.warn('[Бэктест Хэлпер] CSP заблокировал обычный fetch:', err));
+      }
+    } catch (e) {
+      console.warn('[Бэктест Хэлпер] Ошибка checkGithubScriptUpdate:', e);
+    }
+  }
+
+  function inspectIndicatorsHealth(ziStudy, mvStudy) {
+    const warnings = [];
+    let isAllLatest = true;
+
+    if (!ziStudy) {
+      isAllLatest = false;
+      warnings.push('На графике нет индикатора <b>«Матрёшка ЗИ 3.3+»</b>.');
+    } else {
+      const meta = typeof ziStudy.metaInfo === 'function' ? ziStudy.metaInfo() : ziStudy._metaInfo;
+      const title = String(meta?.description || meta?.name || '');
+      const isVisible = readWatched(ziStudy.properties?.()?.visible) !== false;
+      const verMatch = title.match(/(\d+\.\d+)\+?/);
+      const verNum = verMatch ? parseFloat(verMatch[1]) : 0;
+
+      if (!isVisible) {
+        isAllLatest = false;
+        warnings.push('Индикатор <b>«Матрёшка ЗИ»</b> скрыт (включите «глазик» в списке индикаторов).');
+      }
+      if (verNum < MIN_ZI_VERSION) {
+        isAllLatest = false;
+        warnings.push(`На графике старая версия <b>«${title}»</b> вместо <b>3.3+</b>. Удалите индикатор и добавьте заново.`);
+      }
+    }
+
+    if (!mvStudy) {
+      isAllLatest = false;
+      warnings.push('На графике нет индикатора <b>«Матрёшка Модели входа»</b>.');
+    } else {
+      const meta = typeof mvStudy.metaInfo === 'function' ? mvStudy.metaInfo() : mvStudy._metaInfo;
+      const plotsCount = Array.isArray(meta?.plots) ? meta.plots.length : 0;
+      const isVisible = readWatched(mvStudy.properties?.()?.visible) !== false;
+
+      if (!isVisible) {
+        isAllLatest = false;
+        warnings.push('Индикатор <b>«Модели входа»</b> скрыт (включите «глазик» в списке индикаторов).');
+      }
+      if (plotsCount < MIN_MV_PLOTS) {
+        isAllLatest = false;
+        warnings.push('На графике старая версия <b>«Матрёшка Модели входа»</b> (обновите до <b>6.3+</b> передобавлением на график).');
+      }
+    }
+
+    return { isAllLatest, warnings };
   }
 
   function getPlotRow(plotsObj, idx) {
@@ -308,7 +411,7 @@
     }
   }
 
-  function parseZoneLabelText(rawText, boxColor = 0, boxTva = '', boxBgColor = 0) {
+  function parseZoneLabelText(rawText, boxColor = 0, boxTva = '', boxBgColor = 0, boxTha = '') {
     const t = String(rawText || '').trim();
     const low = t.toLowerCase();
     if (low.includes('держит') || low.includes('слом') || low.includes('пробой') || low.startsWith('полка')) return null;
@@ -316,7 +419,11 @@
     const rgb = Number(boxColor || 0) & 0xFFFFFF;
     const bgAlpha = (Number(boxBgColor || 0) >>> 24) & 0xFF;
 
-    if (!t && (bgAlpha === 0 || boxColor === boxBgColor || boxTva === 'center')) return null;
+    if (!t) {
+      if (boxTva === 'center') return null;
+      if (boxTva === 'bottom' && boxTha === 'center') return null;
+      if (rgb !== 4536050 && rgb !== 8493320 && rgb !== 39167 && rgb !== 16736809) return null;
+    }
 
     const gradeMatch = t.match(/(?:^|[\s·])(A\+|A|B)(?=$|[\s·])/i);
     const grade = gradeMatch ? gradeMatch[1].toUpperCase() : '';
@@ -354,8 +461,8 @@
       else if (rgb === 16736809 && boxTva === 'bottom') {
         return {
           zoneType: 'Проторговка', fuel: 'нет', touch: '1', maxTouchNum: 1, against: 'да',
-          side: 'ANY', isProtor: true, htfRank: 0, isDeadFallback: true,
-          rawText: 'Проторговка · против потока (отработана)'
+          side: 'ANY', isProtor: true, htfRank: 0, isDeadFallback: true, isHiddenAlpha0: bgAlpha === 0,
+          rawText: 'Проторговка · против потока (скрыта/отработана)'
         };
       }
     }
@@ -378,7 +485,8 @@
     const isProtor = zoneType.startsWith('Проторговка');
     return {
       zoneType, fuel, touch, maxTouchNum, against, side, isProtor, htfRank,
-      isDeadFallback: !t, rawText: t.replace(/\s*\n\s*/g, ' / ') || `${zoneType} (отработана)`
+      isDeadFallback: !t, isHiddenAlpha0: !t && bgAlpha === 0,
+      rawText: t.replace(/\s*\n\s*/g, ' / ') || `${zoneType} (скрыта/отработана)`
     };
   }
 
@@ -498,7 +606,7 @@
             mem.levels.set(`полка_${bottom.toFixed(2)}`, { sweptType: 'полка', price: bottom, barX1, lastSeenBar: curBar, rawText: `Полка ${bottom}` });
             trimMapFIFO(mem.levels);
           } else {
-            const zInfo = parseZoneLabelText(text, val.c, val.tva, val.bc);
+            const zInfo = parseZoneLabelText(text, val.c, val.tva, val.bc, val.tha);
             if (zInfo && !zInfo.isDeadFallback) {
               mem.zones.set(`${bottom.toFixed(2)}_${top.toFixed(2)}`, { barX1, barX2, bottom, top, zInfo });
               trimMapFIFO(mem.zones);
@@ -608,7 +716,7 @@
             continue;
           }
 
-          const zInfo = parseZoneLabelText(text, b.c, b.tva, b.bc);
+          const zInfo = parseZoneLabelText(text, b.c, b.tva, b.bc, b.tha);
           if (zInfo && !zInfo.isDeadFallback) {
             mem.zones.set(`${bottom.toFixed(2)}_${top.toFixed(2)}`, { barX1, barX2, bottom, top, zInfo });
             trimMapFIFO(mem.zones);
@@ -641,34 +749,97 @@
     return mainG;
   }
 
-  function isValidStructureOnBars(bars, bx1, bx2, price, dir) {
-    if (bx1 == null || bx2 == null || bx1 < -100000 || bx2 >= 900000) return false;
-    if (bx2 <= bx1 || bx2 - bx1 > 120) return false;
+  function resolveZiPlotIndices(s) {
+    const idx = {
+      h4Max: 1, h4Min: 2, dMax: 3, dMin: 4,
+      cont: 5, bos: 6, fake: 7, inCont: 8, inBos: 9,
+      swLow: 12, swHigh: 13, swHtfHigh: 14, swHtfLow: 15,
+      swWeek: 16, swMonth: 17, sw15m: 18
+    };
+    try {
+      const meta = typeof s?.metaInfo === 'function' ? s.metaInfo() : s?._metaInfo;
+      const plotsMeta = meta?.plots;
+      const styles = meta?.styles || meta?.defaults?.styles;
+      if (Array.isArray(plotsMeta) && styles) {
+        plotsMeta.forEach((p, i) => {
+          const t = String(styles[p.id]?.title || p.title || '').toLowerCase();
+          const col = i + 1;
+          if (t.includes('4ч макс')) idx.h4Max = col;
+          else if (t.includes('4ч мин')) idx.h4Min = col;
+          else if (t.includes('макс') && (t.includes('д') || t.includes('н'))) idx.dMax = col;
+          else if (t.includes('мин') && (t.includes('д') || t.includes('н'))) idx.dMin = col;
+          else if (t === 'продолжение') idx.cont = col;
+          else if (t.includes('смена потока')) idx.bos = col;
+          else if (t.includes('ложный пробой')) idx.fake = col;
+          else if (t.includes('внутреннее продолжение')) idx.inCont = col;
+          else if (t.includes('внутренняя смена')) idx.inBos = col;
+          else if (t.includes('снята нижняя')) idx.swLow = col;
+          else if (t.includes('снята верхняя')) idx.swHigh = col;
+          else if (t.includes('снят уровень сверху')) idx.swHtfHigh = col;
+          else if (t.includes('снят уровень снизу')) idx.swHtfLow = col;
+          else if (t.includes('недели')) idx.swWeek = col;
+          else if (t.includes('месяца')) idx.swMonth = col;
+          else if (t.includes('снятие или тест')) idx.sw15m = col;
+        });
+      }
+    } catch (e) {}
+    return idx;
+  }
+
+  function resolveMvPlotIndices(s, sampleRow) {
+    let colorIdx = 3, modelIdx = 4, zoneDirIdx = 8, forbidIdx = 9, structIdx = 13, contLongIdx = 16, contShortIdx = 17;
+    try {
+      const meta = typeof s?.metaInfo === 'function' ? s.metaInfo() : s?._metaInfo;
+      const plotsMeta = meta?.plots;
+      const styles = meta?.styles || meta?.defaults?.styles;
+      if (Array.isArray(plotsMeta) && styles) {
+        plotsMeta.forEach((p, i) => {
+          const stTitle = String(styles[p.id]?.title || p.title || p.id || '').toLowerCase();
+          const col = i + 1;
+          if (stTitle.includes('цвет')) colorIdx = col;
+          else if (stTitle.includes('модел')) modelIdx = col;
+          else if (stTitle.includes('мв зона')) zoneDirIdx = col;
+          else if (stTitle.includes('мв запрет')) forbidIdx = col;
+          else if (stTitle.includes('структура графика')) structIdx = col;
+          else if (stTitle.includes('продолжение лонг')) contLongIdx = col;
+          else if (stTitle.includes('продолжение шорт')) contShortIdx = col;
+        });
+      }
+    } catch (e) {}
+
+    if (Array.isArray(sampleRow)) {
+      if (sampleRow.length <= 3) {
+        colorIdx = 1;
+        modelIdx = 2;
+      } else if (sampleRow[colorIdx] === undefined && sampleRow[1] !== undefined && Math.abs(Number(sampleRow[1])) <= 3) {
+        colorIdx = 1;
+        modelIdx = 2;
+      }
+    }
+    return { colorIdx, modelIdx, zoneDirIdx, forbidIdx, structIdx, contLongIdx, contShortIdx };
+  }
+
+  function isValidStructureOnBars(bars, bx1, bx2, price, isFromBox = false) {
+    if (bx2 == null || bx2 < -100000 || bx2 >= 900000) return false;
+    if (bx1 != null && bx1 > -100000) {
+      if (isFromBox ? (bx2 < bx1) : (bx2 <= bx1)) return false;
+      if (bx2 - bx1 > 400) return false;
+    }
     if (!price || isNaN(price) || price <= 0) return false;
-    if (!bars) return true;
+    if (!bars || isFromBox) return true;
 
     const r2 = getPlotRow(bars, bx2);
     if (r2) {
       const hi2 = Number(r2[2]), lo2 = Number(r2[3]);
       if (!isNaN(hi2) && !isNaN(lo2)) {
-        const rangeTol = Math.max(0.25, (hi2 - lo2) * 1.5);
+        const rangeTol = Math.max(1.2, (hi2 - lo2) * 3.0);
         if (price < lo2 - rangeTol || price > hi2 + rangeTol) return false;
-      }
-    }
-
-    const r1 = getPlotRow(bars, bx1);
-    if (r1) {
-      const hi1 = Number(r1[2]), lo1 = Number(r1[3]);
-      if (!isNaN(hi1) && !isNaN(lo1)) {
-        const startTol = Math.max(0.15, (hi1 - lo1) * 0.5);
-        if (dir === '↑' && Math.abs(price - hi1) > startTol && (price < lo1 - startTol || price > hi1 + startTol)) return false;
-        if (dir === '↓' && Math.abs(price - lo1) > startTol && (price < lo1 - startTol || price > hi1 + startTol)) return false;
       }
     }
     return true;
   }
 
-  function analyzeChartGraphicsO1(g, plotsObj, plotIdxOffset, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars) {
+  function analyzeChartGraphicsO1(g, plotsObj, plotIdxOffset, ziIdx, mvPlotsObj, mvIdxOffset, mvMetaIdx, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars) {
     const out = { matchedZone: null, matchedSweep: null, detectedStructure: null, isHistorical: false };
     if (!g || !entryPrice || !stopPrice) return out;
 
@@ -693,18 +864,35 @@
       out.isHistorical = true;
     }
 
+    const rightEdgeLabelPrices = [];
+    for (const lb of labels) {
+      const ly = Number(lb.y || 0);
+      if (ly > 0) rightEdgeLabelPrices.push(ly);
+    }
+    const isHtfRightEdgeLine = (bx2, yPrice) => {
+      if (bx2 < currentRightBar) return false;
+      return rightEdgeLabelPrices.some(p => Math.abs(p - yPrice) < 0.05);
+    };
+
     const fakeoutBars = new Set();
     for (const l of lines) {
       if (l.st === 'dot' && l.w === 1 && (l.ci === 1027311288 || (Number(l.ci || 0) & 0xFFFFFF) === 3901112)) {
         const fBar = toBar(Math.max(l.x1, l.x2), -999999);
-        if (fBar > 0 && fBar < currentRightBar) fakeoutBars.add(fBar);
+        if (fBar > -100000 && fBar <= currentRightBar) fakeoutBars.add(fBar);
       }
     }
 
     const structByBar = new Map();
-    const upsertStruct = (bx1, bx2, type, dir, inner, price) => {
-      if (bx2 >= currentRightBar) return;
-      if (!isValidStructureOnBars(bars, bx1, bx2, price, dir)) return;
+    const upsertStruct = (bx1, bx2, type, dir, inner, price, isFromBox = false) => {
+      if (bx2 > currentRightBar + 1 || isHtfRightEdgeLine(bx2, price)) return;
+      if (!isValidStructureOnBars(bars, bx1, bx2, price, isFromBox)) return;
+
+      if (isFromBox) {
+        for (let d = -3; d <= 3; d++) {
+          if (structByBar.has(bx2 + d)) return;
+        }
+      }
+
       const existing = structByBar.get(bx2);
       if (!existing) {
         structByBar.set(bx2, { barX1: bx1, barX2: bx2, type, dir, inner, price });
@@ -722,10 +910,10 @@
       if (l.w === 1 && (l.st === 'sol' || l.st === 'dsh') && (l.ci === 4282726130 || l.ci === 4286683400)) {
         const dir = l.ci === 4282726130 ? '↓' : '↑';
         const type = l.st === 'sol' ? 'пробой' : 'слом';
-        upsertStruct(bx1, bx2, type, dir, false, y1);
+        upsertStruct(bx1, bx2, type, dir, false, y1, false);
       } else if (l.w === 1 && l.st === 'dot' && (l.ci === 2353346290 || l.ci === 2357303560)) {
         const dir = l.ci === 2353346290 ? '↓' : '↑';
-        upsertStruct(bx1, bx2, 'слом', dir, true, y1);
+        upsertStruct(bx1, bx2, 'слом', dir, true, y1, false);
       }
     }
 
@@ -738,7 +926,41 @@
       const dir = text.includes('↓') ? '↓' : '↑';
       const type = text.includes('слом') ? 'слом' : 'пробой';
       const isInner = b.ts === 'tiny' || text.includes('внутр');
-      upsertStruct(bx1, bx2, type, dir, isInner, yPrice);
+      upsertStruct(bx1, bx2, type, dir, isInner, yPrice, true);
+    }
+
+    if (plotsObj && triggerIdx != null) {
+      const scanFrom = Math.max(0, triggerIdx - 120);
+      const scanTo = triggerIdx + 1;
+      for (let bi = scanFrom; bi <= scanTo; bi++) {
+        const pr = getPlotRowAtBar(plotsObj, bars, bi, plotIdxOffset);
+        if (!pr) continue;
+        if (pr[ziIdx.fake] === 1) fakeoutBars.add(bi);
+
+        const isBos = pr[ziIdx.bos] === 1;
+        const isCont = pr[ziIdx.cont] === 1;
+        const isInBos = pr[ziIdx.inBos] === 1;
+        if (!isBos && !isCont && !isInBos) continue;
+        if (structByBar.has(bi)) continue;
+
+        let dir = null;
+        if (mvPlotsObj && mvMetaIdx?.structIdx) {
+          const mvRow = getPlotRowAtBar(mvPlotsObj, bars, bi, mvIdxOffset);
+          const stVal = Number(mvRow?.[mvMetaIdx.structIdx] || 0);
+          if (stVal > 0) dir = '↑';
+          else if (stVal < 0) dir = '↓';
+        }
+        const bRow = getPlotRow(bars, bi);
+        if (!dir && bRow) {
+          const op = Number(bRow[1]), cl = Number(bRow[4]);
+          if (!isNaN(op) && !isNaN(cl)) dir = cl >= op ? '↑' : '↓';
+        }
+        if (!dir) dir = isLong ? '↑' : '↓';
+
+        const type = (isBos || isInBos) ? 'слом' : 'пробой';
+        const inner = !isBos && !isCont && isInBos;
+        structByBar.set(bi, { barX1: bi - 5, barX2: bi, type, dir, inner, price: Number(bRow?.[4] || entryPrice) });
+      }
     }
 
     const tradeDirArrow = isLong ? '↑' : '↓';
@@ -778,7 +1000,7 @@
             for (let bi = activeMajor.barX2 - 8; bi <= activeMajor.barX2; bi++) {
               if (fakeoutBars.has(bi)) { hadFakeout = true; break; }
               const pr = getPlotRowAtBar(plotsObj, bars, bi, plotIdxOffset);
-              if (pr && pr[7] === 1) { hadFakeout = true; break; }
+              if (pr && pr[ziIdx.fake] === 1) { hadFakeout = true; break; }
             }
           }
           let cntOpp = 0;
@@ -801,13 +1023,31 @@
       } else {
         out.detectedStructure = `внутр. слом ${lastEv.dir}`;
       }
+    } else if (mvPlotsObj && mvMetaIdx?.structIdx && triggerIdx != null) {
+      const mvRow = getPlotRowAtBar(mvPlotsObj, bars, triggerIdx, mvIdxOffset);
+      const stDir = Number(mvRow?.[mvMetaIdx.structIdx] || 0);
+      if (stDir !== 0) {
+        const prevMvRow = getPlotRowAtBar(mvPlotsObj, bars, triggerIdx - 3, mvIdxOffset);
+        const prevDir = Number(prevMvRow?.[mvMetaIdx.structIdx] || stDir);
+        const arrow = stDir > 0 ? '↑' : '↓';
+        out.detectedStructure = (prevDir !== 0 && prevDir !== stDir) ? `слом ${arrow}` : `пробой ${arrow}`;
+      }
     }
 
-    const tradeLow = Math.min(entryPrice, stopPrice);
+  const tradeLow = Math.min(entryPrice, stopPrice);
     const tradeHigh = Math.max(entryPrice, stopPrice);
     const minP = Math.min(tradeLow, entryExtreme !== '' ? Number(entryExtreme) : tradeLow);
     const maxP = Math.max(tradeHigh, entryExtreme !== '' ? Number(entryExtreme) : tradeHigh);
     const tol = Math.max(0.08, Math.abs(entryPrice - stopPrice) * 0.08);
+
+    const fuelLines = [];
+    for (const l of lines) {
+      if (l.st === 'dsh' && l.w === 1 && (l.ci === 11544476 || l.ci === 2796562332 || (Number(l.ci || 0) & 0xFFFFFF) === 11544476)) {
+        const fy = Number(l.y1 ?? 0);
+        const fbx1 = toBar(Math.min(l.x1, l.x2), -999999);
+        if (fy > 0) fuelLines.push({ y: fy, barX1: fbx1 });
+      }
+    }
 
     const zoneCandidates = [];
     for (const b of boxes) {
@@ -820,19 +1060,24 @@
 
       const memKey = `${bottom.toFixed(2)}_${top.toFixed(2)}`;
       const zInfo = (!b.t && mem.zones.has(memKey))
-        ? mem.zones.get(memKey).zInfo
-        : parseZoneLabelText(b.t, b.c, b.tva, b.bc);
+        ? { ...mem.zones.get(memKey).zInfo }
+        : parseZoneLabelText(b.t, b.c, b.tva, b.bc, b.tha);
       if (!zInfo) continue;
 
       const isDead2Bar = zInfo.isDeadFallback && (barX2 - barX1 <= 3);
       if (triggerIdx != null) {
         if (barX1 > triggerIdx) continue;
-        if (!isDead2Bar && barX2 < triggerIdx - 1) continue;
-        if (isDead2Bar && barX1 > -100000) {
-          if (triggerIdx - barX1 > 120) continue;
+        if (!zInfo.isDeadFallback && barX2 < triggerIdx - 1) continue;
+        if (zInfo.isDeadFallback && barX1 > -100000) {
+          if (isDead2Bar && triggerIdx - barX1 > 120) continue;
           const breakBar = findZoneBreakBar(bars, barX1, bottom, top, b.c);
           if (breakBar != null && triggerIdx > breakBar + 1) continue;
         }
+      }
+
+      if (zInfo.isDeadFallback && zInfo.fuel === 'нет') {
+        const hasFuelLine = fuelLines.some(fl => fl.y >= bottom - 0.05 && fl.y <= top + 0.05 && (barX1 < -100000 || fl.barX1 < -100000 || Math.abs(fl.barX1 - barX1) <= 5));
+        if (hasFuelLine) zInfo.fuel = 'да';
       }
 
       const entryInside = (entryPrice >= bottom - tol && entryPrice <= top + tol);
@@ -841,54 +1086,71 @@
       if (!entryInside && !extremeInside && overlapHeight <= 0) continue;
 
       const sideMatch = (zInfo.side === (isLong ? 'LONG' : 'SHORT')) || (zInfo.side === 'ANY' && !zInfo.isProtor);
+      const riskHeight = Math.max(0.05, tradeHigh - tradeLow);
+      const inRiskBox = overlapHeight >= Math.min(riskHeight * 0.15, (top - bottom) * 0.25);
+      const bornOnEntryBar = (triggerIdx != null && barX1 >= triggerIdx - 1);
+
       let rank = 30;
       if (zInfo.isProtor) rank = entryInside ? 40 : 50;
-      else if (sideMatch && entryInside) rank = 0;
-      else if (sideMatch && extremeInside) rank = 5;
-      else if (sideMatch) rank = 10;
+      else if (sideMatch && entryInside && inRiskBox) rank = 0;
+      else if (sideMatch && inRiskBox) rank = 3;
+      else if (sideMatch && extremeInside) rank = 6;
+      else if (sideMatch) rank = 12;
       else if (entryInside) rank = 22;
-      if (zInfo.isDeadFallback) rank += 15;
+
+      if (bornOnEntryBar) rank += 15;
+      if (isDead2Bar) rank += 16;
+      else if (zInfo.isDeadFallback) rank += 1;
 
       const entryDist = entryPrice < bottom ? (bottom - entryPrice) : (entryPrice > top ? (entryPrice - top) : 0);
       const barDist = (triggerIdx != null && barX1 > -100000) ? Math.abs(triggerIdx - barX1) : 500;
-      zoneCandidates.push({ rank, entryDist, barDist, top, bottom, barX1, zInfo });
+      zoneCandidates.push({ rank, overlapHeight, entryDist, barDist, top, bottom, barX1, zInfo });
+    }
+
+    for (const lb of labels) {
+      const z05 = parseZoneLabelText(lb.t);
+      if (!z05 || !z05.htfRank) continue;
+      const midY = Number(lb.y || 0);
+      const box05 = boxes.find(bx => bx.tva === 'center' && Math.abs(((Number(bx.y1 || 0) + Number(bx.y2 || 0)) / 2) - midY) < 0.05);
+      const top05 = box05 ? Math.max(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY + tol;
+      const bot05 = box05 ? Math.min(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY - tol;
+      const hitMid = (midY >= minP - tol && midY <= maxP + tol);
+      const sideMatch = (z05.side === 'ANY' || z05.side === (isLong ? 'LONG' : 'SHORT'));
+      const hitBox = box05 && sideMatch && (entryPrice >= bot05 - tol && entryPrice <= top05 + tol);
+
+      if (hitMid || hitBox) {
+        const htfRankScore = (hitMid && sideMatch) ? (14 - z05.htfRank) : (hitMid ? (20 - z05.htfRank) : (32 - z05.htfRank));
+        zoneCandidates.push({
+          rank: htfRankScore,
+          overlapHeight: Math.min(tradeHigh, top05) - Math.max(tradeLow, bot05),
+          entryDist: Math.abs(entryPrice - midY),
+          barDist: 0,
+          top: top05,
+          bottom: bot05,
+          barX1: -999999,
+          zInfo: z05
+        });
+      }
     }
 
     if (zoneCandidates.length > 0) {
-      zoneCandidates.sort((a, b) => (a.rank - b.rank) || (a.entryDist - b.entryDist) || (a.barDist - b.barDist));
+      zoneCandidates.sort((a, b) => (a.rank - b.rank) || (b.overlapHeight - a.overlapHeight) || (a.entryDist - b.entryDist) || (a.barDist - b.barDist));
       const best = zoneCandidates[0];
-      const touchAtEntry = (triggerIdx != null && triggerIdx < currentRightBar - 2)
-        ? computeTouchAtEntryBar(bars, best.barX1, triggerIdx, best.bottom, best.top, best.zInfo.maxTouchNum)
+      const touchAtEntry = (!best.zInfo.htfRank && triggerIdx != null && (triggerIdx < currentRightBar - 2 || best.zInfo.isDeadFallback))
+        ? computeTouchAtEntryBar(bars, best.barX1, triggerIdx, best.bottom, best.top, best.zInfo.isDeadFallback ? 5 : best.zInfo.maxTouchNum)
         : best.zInfo.touch;
+
+      let againstVal = best.zInfo.against;
+      if (best.zInfo.isDeadFallback && mvPlotsObj && mvMetaIdx?.forbidIdx && triggerIdx != null) {
+        const mvRow = getPlotRowAtBar(mvPlotsObj, bars, triggerIdx, mvIdxOffset);
+        const forb = Number(mvRow?.[mvMetaIdx.forbidIdx] || 0);
+        if ((isLong && forb === 1) || (!isLong && forb === -1)) againstVal = 'да';
+      }
 
       out.matchedZone = {
         zoneType: best.zInfo.zoneType, fuel: best.zInfo.fuel,
-        touch: touchAtEntry, against: best.zInfo.against, rawText: best.zInfo.rawText
+        touch: touchAtEntry, against: againstVal, rawText: best.zInfo.rawText
       };
-    } else {
-      const htfMatches = [];
-      for (const lb of labels) {
-        const z05 = parseZoneLabelText(lb.t);
-        if (!z05 || !z05.htfRank) continue;
-        const midY = Number(lb.y || 0);
-        const box05 = boxes.find(bx => bx.tva === 'center' && Math.abs(((Number(bx.y1 || 0) + Number(bx.y2 || 0)) / 2) - midY) < 0.05);
-        const top05 = box05 ? Math.max(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY;
-        const bot05 = box05 ? Math.min(Number(box05.y1 || 0), Number(box05.y2 || 0)) : midY;
-        const hitMid = (midY >= minP - tol && midY <= maxP + tol);
-        const hitBox = box05 && (entryPrice >= bot05 - tol && entryPrice <= top05 + tol) && (z05.side === 'ANY' || z05.side === (isLong ? 'LONG' : 'SHORT'));
-        if (hitMid || hitBox) {
-          const sideBonus = (z05.side === (isLong ? 'LONG' : 'SHORT')) ? 10 : 0;
-          htfMatches.push({ score: z05.htfRank + sideBonus + (hitMid ? 5 : 0), midDist: Math.abs(entryPrice - midY), z05 });
-        }
-      }
-      if (htfMatches.length > 0) {
-        htfMatches.sort((a, b) => (b.score - a.score) || (a.midDist - b.midDist));
-        const bestHtf = htfMatches[0].z05;
-        out.matchedZone = {
-          zoneType: bestHtf.zoneType, fuel: bestHtf.fuel,
-          touch: '1', against: bestHtf.against, rawText: bestHtf.rawText
-        };
-      }
     }
 
     let sweepHigh = maxP, sweepLow = minP;
@@ -916,8 +1178,8 @@
 
       const lRgb = Number(l.ci || 0) & 0xFFFFFF;
       const lAlpha = (Number(l.ci || 0) >>> 24) & 0xFF;
-      const isSweptBait = l.st === 'dot' && l.w === 1 && (l.ci === 1505670578 || l.ci === 1027311288 || ((lRgb === 12498354 || lRgb === 3901112) && lAlpha > 0 && lAlpha < 120));
-      const isSweptShelf = l.st === 'dot' && l.w === 2 && (l.ci === 1497708274 || l.ci === 1501665544 || ((lRgb === 4536050 || lRgb === 8493320) && lAlpha > 0 && lAlpha < 120));
+      const isSweptBait = l.st === 'dot' && l.w === 1 && (l.ci === 1505670578 || l.ci === 1027311288 || ((lRgb === 12498354 || lRgb === 3901112) && lAlpha < 120));
+      const isSweptShelf = l.st === 'dot' && l.w === 2 && (l.ci === 1497708274 || l.ci === 1501665544 || ((lRgb === 4536050 || lRgb === 8493320) && lAlpha < 120));
       if (!isSweptBait && !isSweptShelf) continue;
 
       const barX1 = toBar(Math.min(l.x1, l.x2), -999999);
@@ -965,20 +1227,22 @@
         const barHi = Number(barRow?.[2] ?? sweepHigh);
         const barLo = Number(barRow?.[3] ?? sweepLow);
 
-        const h4Lvl = Number(prevPr[isLong ? 2 : 1] || pr[isLong ? 2 : 1] || 0);
-        const d1Lvl = Number(prevPr[isLong ? 4 : 3] || pr[isLong ? 4 : 3] || 0);
+        const h4Col = isLong ? ziIdx.h4Min : ziIdx.h4Max;
+        const d1Col = isLong ? ziIdx.dMin : ziIdx.dMax;
+        const h4Lvl = Number(prevPr[h4Col] || pr[h4Col] || 0);
+        const d1Lvl = Number(prevPr[d1Col] || pr[d1Col] || 0);
         const directHitD1 = d1Lvl > 0 && (isLong ? (barLo <= d1Lvl + tol && entryPrice >= d1Lvl - tol) : (barHi >= d1Lvl - tol && entryPrice <= d1Lvl + tol));
         const directHitH4 = h4Lvl > 0 && (isLong ? (barLo <= h4Lvl + tol && entryPrice >= h4Lvl - tol) : (barHi >= h4Lvl - tol && entryPrice <= h4Lvl + tol));
 
-        const sweptHtf = (isLong ? (pr[15] === 1) : (pr[14] === 1)) || (pr[16] === 1) || (pr[17] === 1) || directHitD1 || directHitH4;
-        const swept15m = (pr[18] === 1) || (isLong ? (pr[12] === 1) : (pr[13] === 1));
+        const sweptHtf = (isLong ? (pr[ziIdx.swHtfLow] === 1) : (pr[ziIdx.swHtfHigh] === 1)) || (pr[ziIdx.swWeek] === 1) || (pr[ziIdx.swMonth] === 1) || directHitD1 || directHitH4;
+        const swept15m = (pr[ziIdx.sw15m] === 1) || (isLong ? (pr[ziIdx.swLow] === 1) : (pr[ziIdx.swHigh] === 1));
 
         if (sweptHtf) {
           let sType = 'уровень 1Ч';
           let swPrice = Number(entryExtreme !== '' ? entryExtreme : entryPrice);
 
           if (directHitD1 && directHitH4 && Math.abs(d1Lvl - h4Lvl) < 0.1) { sType = 'склейка Д · 4Ч'; swPrice = d1Lvl; }
-          else if (directHitD1 || pr[16] === 1 || pr[17] === 1) { sType = 'уровень Д'; if (directHitD1) swPrice = d1Lvl; }
+          else if (directHitD1 || pr[ziIdx.swWeek] === 1 || pr[ziIdx.swMonth] === 1) { sType = 'уровень Д'; if (directHitD1) swPrice = d1Lvl; }
           else if (directHitH4) { sType = 'уровень 4Ч'; swPrice = h4Lvl; }
           sweepCandidates.push({ priority: 0, barDiff: triggerIdx - bi, priceDiff: 0, sType, price: swPrice, rawText: `${sType} ${swPrice}` });
           break;
@@ -998,33 +1262,6 @@
     return out;
   }
 
-  function resolveMvPlotIndices(s, sampleRow) {
-    let colorIdx = 3, modelIdx = 4;
-    try {
-      const meta = typeof s.metaInfo === 'function' ? s.metaInfo() : s._metaInfo;
-      const plotsMeta = meta?.plots;
-      const styles = meta?.styles || meta?.defaults?.styles;
-      if (Array.isArray(plotsMeta) && styles) {
-        plotsMeta.forEach((p, i) => {
-          const stTitle = String(styles[p.id]?.title || p.title || p.id || '').toLowerCase();
-          if (stTitle.includes('цвет')) colorIdx = i + 1;
-          else if (stTitle.includes('модел')) modelIdx = i + 1;
-        });
-      }
-    } catch (e) {}
-
-    if (Array.isArray(sampleRow)) {
-      if (sampleRow.length <= 3) {
-        colorIdx = 1;
-        modelIdx = 2;
-      } else if (sampleRow[colorIdx] === undefined && sampleRow[1] !== undefined && Math.abs(Number(sampleRow[1])) <= 3) {
-        colorIdx = 1;
-        modelIdx = 2;
-      }
-    }
-    return { colorIdx, modelIdx };
-  }
-
   function mapMvModelToFormM1(modelCode, isContinuation) {
     if (isContinuation || modelCode === 18) return 'Правильный откат';
     if (modelCode === 12) return 'Поглощение';
@@ -1034,83 +1271,93 @@
   }
 
   function readMatryoshkaIndicators(model, symKey, entryTime, triggerIdx, startIdx, endIdx, isLong, entryPrice, stopPrice, entryExtreme, bars) {
-    const result = { flows: null, flowsHistorical: false, candleColor: null, modelCode: 0, isContinuation: false, matchedZone: null, matchedSweep: null, detectedStructure: null };
+    const result = { flows: null, flowsHistorical: false, candleColor: null, modelCode: 0, isContinuation: false, matchedZone: null, matchedSweep: null, detectedStructure: null, health: null };
     if (!model || typeof model.dataSources !== 'function') return result;
 
     try {
       syncGraphicsMemoryO1(model, symKey);
       const sources = model.dataSources();
+      let ziStudy = null, mvStudy = null;
+
       for (const s of sources) {
         const meta = typeof s.metaInfo === 'function' ? s.metaInfo() : s._metaInfo;
         const title = meta?.description || meta?.name || '';
+        if (!ziStudy && isMatryoshkaZiTitle(title)) ziStudy = s;
+        if (!mvStudy && /модели входа/i.test(title) && !/price action/i.test(title)) mvStudy = s;
+      }
 
-        if (isMatryoshkaZiTitle(title)) {
-          const g = typeof s.graphics === 'function' ? s.graphics() : s._graphics;
-          const plotsObj = typeof s.plots === 'function' ? s.plots() : s._data?.bars?.();
-          const tcCells = extractDwgPrimitives(g, 'dwgtablecells');
-          if (tcCells.length > 0) {
-            const rowsByTid = {};
-            for (const cell of tcCells) {
-              if (!cell || cell.tid == null) continue;
-              const key = `${cell.tid}_${cell.row}`;
-              if (!rowsByTid[key]) rowsByTid[key] = {};
-              rowsByTid[key][cell.col] = String(cell.t || '').trim();
+      result.health = inspectIndicatorsHealth(ziStudy, mvStudy);
+
+      let mvPlotsObj = null, mvIdxOffset = 0, mvMetaIdx = null;
+      if (mvStudy) {
+        mvPlotsObj = typeof mvStudy.plots === 'function' ? mvStudy.plots() : mvStudy._data?.bars?.();
+        const foundBar = findPlotRowByIndexOrTime(mvPlotsObj, entryTime, triggerIdx);
+        if (foundBar && mvPlotsObj) {
+          mvMetaIdx = resolveMvPlotIndices(mvStudy, foundBar.val);
+          mvIdxOffset = triggerIdx != null ? (foundBar.index - triggerIdx) : 0;
+          const { colorIdx, modelIdx, contLongIdx, contShortIdx } = mvMetaIdx;
+          const baseIdx = foundBar.index;
+          const candidates = [baseIdx, baseIdx - 1, baseIdx + 1, baseIdx - 2];
+          let matchedCode = 0, matchedModel = 0, isCont = false;
+          for (const cIdx of candidates) {
+            const r = getPlotRow(mvPlotsObj, cIdx);
+            if (!r) continue;
+            let code = Number(r[colorIdx] ?? 0);
+            let mCode = Number(r[modelIdx] ?? 0);
+            if (code === 0 && colorIdx !== 1 && r[1] != null && Math.abs(Number(r[1])) <= 3) {
+              code = Number(r[1] ?? 0);
+              mCode = Number(r[2] ?? 0);
             }
-            const flows = {};
-            for (const rObj of Object.values(rowsByTid)) {
-              const label = rObj[0], sym = rObj[1];
-              if (!label || !sym) continue;
-              const dirWord = sym === '↑' ? 'вверх' : (sym === '↓' ? 'вниз' : '—');
-              if (label === 'Д' || label === 'D1') flows.d = dirWord;
-              else if (label === '4Ч' || label === 'H4') flows.h4 = dirWord;
-              else if (label === '1Ч' || label === 'H1') flows.h1 = dirWord;
-              else if (label === '15м' || label === 'M15') flows.m15 = dirWord;
+            if ((isLong && code > 0 && code <= 3) || (!isLong && code < 0 && code >= -3)) {
+              matchedCode = code;
+              matchedModel = mCode;
+              isCont = (mCode === 18) || (isLong ? (r?.[contLongIdx] === 1) : (r?.[contShortIdx] === 1));
+              break;
             }
-            if (Object.keys(flows).length > 0) result.flows = flows;
           }
-
-          if (g && entryPrice && stopPrice) {
-            const ziPlotBar = findPlotRowByIndexOrTime(plotsObj, entryTime, triggerIdx);
-            const plotIdxOffset = (ziPlotBar && triggerIdx != null) ? (ziPlotBar.index - triggerIdx) : 0;
-            const direct = analyzeChartGraphicsO1(g, plotsObj, plotIdxOffset, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars);
-            result.matchedZone = direct.matchedZone;
-            result.matchedSweep = direct.matchedSweep;
-            result.detectedStructure = direct.detectedStructure;
-            result.flowsHistorical = direct.isHistorical;
+          const colorMap = { '3': 'Лонг 3', '2': 'Лонг 2', '1': 'Лонг 1', '-1': 'Шорт 1', '-2': 'Шорт 2', '-3': 'Шорт 3' };
+          if (colorMap[String(matchedCode)]) {
+            result.candleColor = colorMap[String(matchedCode)];
+            result.modelCode = matchedModel;
+            result.isContinuation = isCont;
           }
         }
+      }
 
-        if (!result.candleColor && /модели входа/i.test(title) && !/price action/i.test(title)) {
-          const plots = typeof s.plots === 'function' ? s.plots() : s._data?.bars?.();
-          const foundBar = findPlotRowByIndexOrTime(plots, entryTime, triggerIdx);
-          if (foundBar && plots) {
-            const { colorIdx, modelIdx } = resolveMvPlotIndices(s, foundBar.val);
-            const baseIdx = foundBar.index;
-            const candidates = [baseIdx, baseIdx - 1, baseIdx + 1, baseIdx + 2, baseIdx - 2];
-            let matchedCode = 0, matchedModel = 0, isCont = false;
-            for (const cIdx of candidates) {
-              const r = getPlotRow(plots, cIdx);
-              if (!r) continue;
-              let code = Number(r[colorIdx] ?? 0);
-              let mCode = Number(r[modelIdx] ?? 0);
-              if (code === 0 && colorIdx !== 1 && r[1] != null && Math.abs(Number(r[1])) <= 3) {
-                code = Number(r[1] ?? 0);
-                mCode = Number(r[2] ?? 0);
-              }
-              if ((isLong && code > 0 && code <= 3) || (!isLong && code < 0 && code >= -3)) {
-                matchedCode = code;
-                matchedModel = mCode;
-                isCont = (mCode === 18) || (isLong ? (r?.[7] === 1) : (r?.[8] === 1));
-                break;
-              }
-            }
-            const colorMap = { '3': 'Лонг 3', '2': 'Лонг 2', '1': 'Лонг 1', '-1': 'Шорт 1', '-2': 'Шорт 2', '-3': 'Шорт 3' };
-            if (colorMap[String(matchedCode)]) {
-              result.candleColor = colorMap[String(matchedCode)];
-              result.modelCode = matchedModel;
-              result.isContinuation = isCont;
-            }
+      if (ziStudy) {
+        const g = typeof ziStudy.graphics === 'function' ? ziStudy.graphics() : ziStudy._graphics;
+        const plotsObj = typeof ziStudy.plots === 'function' ? ziStudy.plots() : ziStudy._data?.bars?.();
+        const ziIdx = resolveZiPlotIndices(ziStudy);
+        const tcCells = extractDwgPrimitives(g, 'dwgtablecells');
+        if (tcCells.length > 0) {
+          const rowsByTid = {};
+          for (const cell of tcCells) {
+            if (!cell || cell.tid == null) continue;
+            const key = `${cell.tid}_${cell.row}`;
+            if (!rowsByTid[key]) rowsByTid[key] = {};
+            rowsByTid[key][cell.col] = String(cell.t || '').trim();
           }
+          const flows = {};
+          for (const rObj of Object.values(rowsByTid)) {
+            const label = rObj[0], sym = rObj[1];
+            if (!label || !sym) continue;
+            const dirWord = sym === '↑' ? 'вверх' : (sym === '↓' ? 'вниз' : '—');
+            if (label === 'Д' || label === 'D1') flows.d = dirWord;
+            else if (label === '4Ч' || label === 'H4') flows.h4 = dirWord;
+            else if (label === '1Ч' || label === 'H1') flows.h1 = dirWord;
+            else if (label === '15м' || label === 'M15') flows.m15 = dirWord;
+          }
+          if (Object.keys(flows).length > 0) result.flows = flows;
+        }
+
+        if (g && entryPrice && stopPrice) {
+          const ziPlotBar = findPlotRowByIndexOrTime(plotsObj, entryTime, triggerIdx);
+          const plotIdxOffset = (ziPlotBar && triggerIdx != null) ? (ziPlotBar.index - triggerIdx) : 0;
+          const direct = analyzeChartGraphicsO1(g, plotsObj, plotIdxOffset, ziIdx, mvPlotsObj, mvIdxOffset, mvMetaIdx, symKey, triggerIdx, isLong, entryPrice, stopPrice, entryExtreme, bars);
+          result.matchedZone = direct.matchedZone;
+          result.matchedSweep = direct.matchedSweep;
+          result.detectedStructure = direct.detectedStructure;
+          result.flowsHistorical = direct.isHistorical;
         }
       }
     } catch (e) {}
@@ -1643,7 +1890,7 @@
     }
   }
 
-  function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; }
+function getActiveSep() { return state.outputProfile === 'en_form' ? '.' : ','; }
   function numStr(val) {
     if (val == null || val === '') return '';
     const s = String(val);
@@ -1780,8 +2027,8 @@
 
   const uiHtml = `
   <div id="bt-toast" style="display:none;position:fixed;bottom:24px;right:24px;z-index:10000000;background:#141417;color:#f4f4f5;padding:11px 16px;border-radius:8px;border-left:4px solid #089981;box-shadow:0 12px 32px rgba(0,0,0,0.9);font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif;font-size:12px;font-weight:500;max-width:370px;"></div>
-  <button type="button" id="bt-fab-btn" style="position:fixed;bottom:18px;left:58px;z-index:9999990;display:flex;align-items:center;gap:6px;background:#141417;color:#e5c158;border:1px solid rgba(229,193,88,0.45);border-radius:7px;padding:6px 12px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.75);transition:0.15s;">
-    ${LOGO_SVG}<span>Матрёшка</span><span style="color:#9ca3af;font-weight:400;font-size:11px;">(${isMac ? '⌃Q' : 'F2'})</span>
+  <button type="button" id="bt-fab-btn" style="position:fixed;bottom:18px;left:58px;z-index:9999990;display:none;align-items:center;gap:6px;background:#141417;color:#e5c158;border:1px solid rgba(229,193,88,0.45);border-radius:7px;padding:6px 12px;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.75);transition:0.15s;">
+    ${LOGO_SVG}<span>Бэктест Хэлпер</span><span style="color:#9ca3af;font-weight:400;font-size:11px;">(${isMac ? '⌃Q' : 'F2'})</span>
   </button>
   <div id="bt-modal" class="bt-no-scroll" tabindex="-1" style="display:none;outline:none;position:fixed;top:${state.posTop}px;right:${state.posRight}px;z-index:9999999;background:#0d0d10;color:#f4f4f5;padding:13px;border-radius:12px;box-shadow:0 22px 55px rgba(0,0,0,0.92),0 0 0 1px rgba(229,193,88,0.25);font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif;width:394px;max-height:95vh;overflow-y:auto;box-sizing:border-box;user-select:none;">
     <div id="bt-header-drag" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid #222228;cursor:move;">
@@ -1798,6 +2045,7 @@
       </div>
     </div>
     <div id="bt-trade-card" style="background:#141418;border:1px solid #26262e;border-radius:8px;padding:8px 10px;margin-bottom:9px;transition:border-color 0.2s ease;">
+      <div id="bt-version-banner" style="display:none;margin-bottom:8px;"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-bottom:6px;white-space:nowrap;">
         <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;min-width:0;overflow:hidden;">
           <b id="bt-info-sym" style="color:#ffffff;white-space:nowrap;">XAUUSD · M1</b>
@@ -1969,6 +2217,106 @@
   const rowPreviewEl = document.getElementById('bt-row-preview');
   const fixHelpBoxEl = document.getElementById('bt-fix-help-box');
   let toastTimer = null;
+
+  function mountNativeToolbarButton() {
+    const fabBtn = document.getElementById('bt-fab-btn');
+    if (fabBtn) fabBtn.style.display = 'none';
+
+    let nativeBtn = document.getElementById('bt-native-toolbar-btn');
+    if (!nativeBtn) {
+      const tipText = `Бэктест Хэлпер (${isMac ? '⌃Q' : 'F2'})`;
+      nativeBtn = document.createElement('button');
+      nativeBtn.id = 'bt-native-toolbar-btn';
+      nativeBtn.type = 'button';
+      nativeBtn.tabIndex = -1;
+      nativeBtn.title = tipText;
+      nativeBtn.setAttribute('aria-label', tipText);
+      nativeBtn.style.cssText = 'position:fixed;z-index:9999990;width:38px;height:38px;padding:0;border:none;border-radius:6px;background:transparent;cursor:pointer;display:none;align-items:center;justify-content:center;transition:background 0.12s ease;';
+      nativeBtn.onmouseenter = () => { nativeBtn.style.background = 'rgba(255,255,255,0.08)'; };
+      nativeBtn.onmouseleave = () => { nativeBtn.style.background = 'transparent'; };
+      nativeBtn.innerHTML = `
+        <span role="img" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;pointer-events:none;">
+          ${NATIVE_TOOLBAR_SVG}
+        </span>
+        <span id="bt-native-badge" style="display:none;position:absolute;top:3px;right:3px;min-width:13px;height:13px;padding:0 3px;border-radius:99px;background:#e5c158;color:#09090b;font-size:9px;font-weight:800;line-height:13px;text-align:center;box-sizing:border-box;pointer-events:none;"></span>
+      `;
+      nativeBtn.onclick = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (modalEl.style.display === 'block') modalEl.style.display = 'none';
+        else openModal();
+      };
+      document.body.appendChild(nativeBtn);
+    }
+
+    const favBtn = document.getElementById('drawing-toolbar-favorite-drawings');
+    const toolbarEl = document.getElementById('drawing-toolbar');
+    const spacerEl = toolbarEl?.querySelector('[class*="fill-"]');
+    const favRect = favBtn?.getBoundingClientRect();
+
+    if (favRect && favRect.width > 0 && (!spacerEl || spacerEl.clientHeight >= 38)) {
+      nativeBtn.style.left = `${Math.round(favRect.left + (favRect.width - 38) / 2)}px`;
+      nativeBtn.style.top = `${Math.round(favRect.top - 40)}px`;
+      nativeBtn.style.display = 'flex';
+    } else {
+      const replayBtn = document.getElementById('header-toolbar-replay') || document.getElementById('header-toolbar-undo-redo');
+      const repRect = replayBtn?.getBoundingClientRect();
+      if (repRect && repRect.width > 0) {
+        nativeBtn.style.left = `${Math.round(repRect.right + 8)}px`;
+        nativeBtn.style.top = `${Math.round(repRect.top + (repRect.height - 34) / 2)}px`;
+        nativeBtn.style.display = 'flex';
+      } else if (favRect && favRect.width > 0) {
+        nativeBtn.style.left = `${Math.round(favRect.right + 6)}px`;
+        nativeBtn.style.top = `${Math.round(favRect.top)}px`;
+        nativeBtn.style.display = 'flex';
+      }
+    }
+
+    const badgeEl = document.getElementById('bt-native-badge');
+    if (badgeEl) {
+      const cnt = getTplBucket().batchQueue.length;
+      if (cnt > 0) {
+        badgeEl.innerText = String(cnt);
+        badgeEl.style.display = 'block';
+      } else {
+        badgeEl.style.display = 'none';
+      }
+    }
+  }
+
+  function updateVersionBannerUI() {
+    const bannerEl = document.getElementById('bt-version-banner');
+    if (!bannerEl) return;
+
+    const health = currentTrade?.ind?.health;
+    let html = '';
+
+    if (remoteUpdateVersion) {
+      html += `
+        <div style="background:rgba(229,193,88,0.14);border:1px solid #e5c158;border-radius:7px;padding:6px 9px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;gap:6px;">
+          <span style="font-size:10.5px;color:#f3d26b;font-weight:600;">🔄 Доступен новый скрипт <b>v${remoteUpdateVersion}</b> (у вас v${SCRIPT_VERSION})</span>
+          <button type="button" id="bt-oneclick-update" style="background:#e5c158;color:#09090b;border:none;border-radius:4px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;">Обновить в 1 клик</button>
+        </div>`;
+    }
+
+    if (health && !health.isAllLatest && health.warnings.length > 0) {
+      html += `
+        <div style="background:rgba(242,54,69,0.14);border:1px solid rgba(242,54,69,0.55);border-radius:7px;padding:7px 9px;font-size:10px;color:#fca5a5;line-height:1.35;">
+          <div style="font-weight:700;color:#f87171;margin-bottom:3px;">⚠️ Внимание: автозаполнение может ошибаться!</div>
+          ${health.warnings.map(w => `<div style="margin-top:2px;">• ${w}</div>`).join('')}
+        </div>`;
+    }
+
+    if (html) {
+      bannerEl.innerHTML = html;
+      bannerEl.style.display = 'block';
+      const updBtn = document.getElementById('bt-oneclick-update');
+      if (updBtn) updBtn.onclick = () => window.open(`${SCRIPT_RAW_URL}?t=${Date.now()}`, '_blank');
+    } else {
+      bannerEl.style.display = 'none';
+      bannerEl.innerHTML = '';
+    }
+  }
 
   function tryCaptureTvScreenshotUrl(rawText) {
     if (isInternalCopy) return false;
@@ -2587,7 +2935,8 @@
         </div>
         <div class="bt-section-box">
           <div style="display:grid;grid-template-columns:1.05fr 0.95fr;gap:6px;">
-          <div><div class="bt-lbl">ВИД ЗОНЫ ${zoneBolt}</div>${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель · A+', 'Средний покупатель · A', 'Красивый покупатель · B', 'Сильный продавец · A+', 'Средний продавец · A', 'Красивый продавец · B', 'Зона входа · A+', 'Зона входа · A', 'Зона входа · B', 'Проторговка', 'Проторговка · спит', 'Зона 15м 0.5 · A+', 'Зона 15м 0.5 · A', 'Зона 15м 0.5 · B', 'Зона 1Ч 0.5 · A+', 'Зона 1Ч 0.5 · A', 'Зона 1Ч 0.5 · B', 'Зона 4Ч 0.5 · A+', 'Зона 4Ч 0.5 · A', 'Зона 4Ч 0.5 · B', 'Зона Д 0.5 · A+', 'Зона Д 0.5 · A', 'Зона Д 0.5 · B', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], defZone30)}</div>            <div><div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>${makeCandleColorSelect(defCandleCol)}</div>
+            <div><div class="bt-lbl">ВИД ЗОНЫ ${zoneBolt}</div>${makeSelect('f-zone30', ['Разворотная зона', 'Сильный покупатель · A+', 'Средний покупатель · A', 'Красивый покупатель · B', 'Сильный продавец · A+', 'Средний продавец · A', 'Красивый продавец · B', 'Зона входа · A+', 'Зона входа · A', 'Зона входа · B', 'Проторговка', 'Проторговка · спит', 'Зона 15м 0.5 · A+', 'Зона 15м 0.5 · A', 'Зона 15м 0.5 · B', 'Зона 1Ч 0.5 · A+', 'Зона 1Ч 0.5 · A', 'Зона 1Ч 0.5 · B', 'Зона 4Ч 0.5 · A+', 'Зона 4Ч 0.5 · A', 'Зона 4Ч 0.5 · B', 'Зона Д 0.5 · A+', 'Зона Д 0.5 · A', 'Зона Д 0.5 · B', 'Зона 15м 0.5', 'Зона 1Ч 0.5', 'Зона 4Ч 0.5', 'Зона Д 0.5'], defZone30)}</div>
+            <div><div class="bt-lbl">СВЕЧА ВХОДА ${ind.candleColor ? BOLT : ''}</div>${makeCandleColorSelect(defCandleCol)}</div>
           </div>
           <div style="display:grid;grid-template-columns:0.95fr 1.25fr 0.95fr;gap:6px;align-items:start;">
             <div><div class="bt-lbl">ТОПЛИВО ${zoneBolt}</div>${makeSwitch('f-fuel30', defFuel30, 'gold')}</div>
@@ -2835,6 +3184,7 @@
   }
 
   setInterval(() => {
+    mountNativeToolbarButton();
     const model = getTvModel();
     if (!model) return;
     syncRadarOnBarClose(model);
@@ -2990,7 +3340,9 @@
     batchCntEl.style.color = bStats.totalR > 0 ? '#34d399' : (bStats.totalR < 0 ? '#f87171' : '#f3d26b');
     document.getElementById('bt-copy-batch-btn').title = `${bStats.tooltip}\nНажмите, чтобы скопировать все сохранённые сделки сразу (для вставки в столбец ${pasteCol})`;
 
+    mountNativeToolbarButton();
     updateScreenshotPillUI();
+    updateVersionBannerUI();
     if (!currentTrade) return;
 
     const total = allChartTrades.length || 1;
@@ -3210,6 +3562,9 @@
   mainCopyBtn.onclick = () => buildAndCopyRow(false);
   document.getElementById('bt-close-x').onclick = () => { modalEl.style.display = 'none'; };
   document.getElementById('bt-fab-btn').onclick = () => openModal();
+
+  mountNativeToolbarButton();
+  checkGithubScriptUpdate();
 
   (function initDrag() {
     const handle = document.getElementById('bt-header-drag');
