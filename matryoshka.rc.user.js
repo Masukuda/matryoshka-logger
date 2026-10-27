@@ -4485,7 +4485,7 @@
     initTradeSafeDefault(currentTrade);
     autoSuggestError();
     restoreSavedTradeState();
-    setCandleColVal(document.getElementById('f-candle-col')?.value || defCandleCol);
+    setCandleColVal(document.getElementById('f-candle-col')?.value || ind.candleColor || (isLong ? 'Лонг 3' : 'Шорт 3'));
     syncSafeUI();
     syncPresetHighlights();
     updateAutoStripSummaryUI();
